@@ -39,8 +39,19 @@ WRITER_STYLES = {
 }
 
 # ---- Session state ----
-for k in ["last_request", "last_poem", "last_critique", "last_revised"]:
+for k in [
+    "last_request",
+    "last_poem",
+    "last_critique",
+    "last_revised",
+    "versions",
+    "poem_name",
+]:
     st.session_state.setdefault(k, None)
+
+if st.session_state["versions"] is None:
+    # Each element: {"label": "Version 1", "text": "..."}
+    st.session_state["versions"] = []
 
 tabs = st.tabs(["Write", "Advanced"])
 
@@ -83,6 +94,8 @@ with tabs[1]:
         ],
         index=0,
     )
+
+    # Hidden by default; critique JSON stays internal.
     show_debug = st.checkbox("Show internal debug (draft & critique)", value=False)
 
 # Create LLM after advanced settings exist
@@ -92,18 +105,21 @@ llm = create_llm(cfg, model=model, temperature=temperature, top_p=top_p)
 with tabs[0]:
     st.subheader("Write")
 
+    poem_name = st.text_input(
+        "Poem Name",
+        value=(st.session_state["poem_name"] or "Untitled"),
+        help="This name will be used for downloads and version grouping.",
+    )
+    st.session_state["poem_name"] = poem_name
+
     theme_bg = st.text_area(
         "Theme / Background",
         value="Write a sincere apology poem. Make it specific and human.",
         height=120,
-        help="A single description of what you want. This is the main input.",
     )
 
     writer_style_choice = st.selectbox(
-        "Writer Style",
-        list(WRITER_STYLES.keys()),
-        index=0,
-        help="Choose a vibe. We evoke mood/techniques only—no imitation or copying.",
+        "Writer Style", list(WRITER_STYLES.keys()), index=0
     )
 
     custom_writer_vibe = None
@@ -111,7 +127,6 @@ with tabs[0]:
         custom_writer_vibe = st.text_input(
             "Custom writer vibe",
             value="classical storyteller energy (no copying)",
-            help="Describe the style vibe in your own words.",
         )
 
     occasion = st.selectbox(
@@ -127,7 +142,6 @@ with tabs[0]:
             "valentine",
         ],
         index=0,
-        help="Used as inspiration framing, not a strict requirement.",
     )
 
     style = st.selectbox(
@@ -150,7 +164,7 @@ with tabs[0]:
     if style == "acrostic":
         acrostic_word = st.text_input("Acrostic word", value="WINTER")
 
-    # Build writer vibe based on selection
+    # Build writer vibe
     if WRITER_STYLES.get(writer_style_choice) == "CUSTOM":
         writer_vibe = (custom_writer_vibe or "").strip() or None
     else:
@@ -162,13 +176,13 @@ with tabs[0]:
     syllable_val = syllable_hints.strip() or None
     audience_val = audience.strip() or None
 
-    # Build request
+    # Build request object
     req = PoemRequest(
         occasion=occasion,
         theme=theme_bg.strip() or "a meaningful moment",
         audience=audience_val,
         style=style,
-        tone=tone,  # tone moved to Advanced
+        tone=tone,
         writer_vibe=writer_vibe,
         must_include=must_list,
         avoid=avoid_list,
@@ -180,20 +194,49 @@ with tabs[0]:
         acrostic_word=(acrostic_word.strip() if acrostic_word else None),
     )
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     with c1:
         btn_fast = st.button("Generate only (fast)")
     with c2:
         btn_full = st.button("Generate + Improve", type="primary")
     with c3:
         btn_again = st.button(
-            "Improve again", disabled=st.session_state["last_poem"] is None
+            "Improve again", disabled=len(st.session_state["versions"]) == 0
         )
+    with c4:
+        btn_clear = st.button("Clear versions")
+
+    if btn_clear:
+        st.session_state["versions"] = []
+        st.session_state["last_request"] = None
+        st.session_state["last_poem"] = None
+        st.session_state["last_critique"] = None
+        st.session_state["last_revised"] = None
+        st.rerun()
 
     st.divider()
     st.subheader("Output")
 
-    # ---- Actions ----
+    # Helper: render versions
+    def render_versions():
+        if not st.session_state["versions"]:
+            st.info("No versions yet. Click Generate.")
+            return
+
+        for i, v in enumerate(st.session_state["versions"], start=1):
+            label = v["label"]
+            text = v["text"]
+
+            st.markdown(f"### {label}")
+            st.code(text)
+
+            safe_title = (poem_name.strip() or "Untitled").replace("/", "-")
+            filename = f"{safe_title} - {label}.txt"
+            st.download_button(
+                f"Download {label} (.txt)", text, file_name=filename, key=f"dl_{i}"
+            )
+
+    # Generate only: adds Version 1
     if btn_fast:
         out = generate_only(llm, req)
         if not out.ok:
@@ -203,65 +246,96 @@ with tabs[0]:
             st.session_state["last_poem"] = out.poem
             st.session_state["last_critique"] = None
             st.session_state["last_revised"] = None
+            st.session_state["versions"] = [{"label": "Version 1", "text": out.poem}]
 
-            # Simple output: show poem only
-            st.code(out.poem)
+            render_versions()
 
-            # Optional debug
-            if show_debug:
-                st.markdown("#### Debug: draft")
-                st.code(out.poem)
+            # Ratings UI (visible)
+            st.divider()
+            st.subheader("Rate this poem (helps personalization)")
+            rating = st.select_slider(
+                "Rating", options=[1, 2, 3, 4, 5], value=4, key="rating_v1"
+            )
+            feedback = st.text_area("Optional feedback", key="feedback_v1")
+            st.button("Save rating (coming Day 2 storage)", disabled=True)
 
+    # Generate + Improve: Version 1 + Version 2 (Upgraded)
     if btn_full:
         out = generate_and_improve(llm, req)
         if not out.ok:
             st.error(out.error_user)
         else:
-            # Store internals in session but hide by default
             st.session_state["last_request"] = req
             st.session_state["last_poem"] = out.poem
-            st.session_state["last_critique"] = out.critique
+            st.session_state["last_critique"] = out.critique  # stored but hidden
             st.session_state["last_revised"] = out.revised_poem
 
-            # Simple output: show revised only
-            st.code(out.revised_poem)
+            st.session_state["versions"] = [
+                {"label": "Version 1", "text": out.poem},
+                {"label": "Upgraded Version (Version 2)", "text": out.revised_poem},
+            ]
 
-            st.download_button(
-                "Download (.txt)", out.revised_poem, file_name="the_weight_of_words.txt"
+            render_versions()
+
+            # Ratings UI applies to the latest version shown (Version 2)
+            st.divider()
+            st.subheader("Rate the Upgraded Version (helps personalization)")
+            rating = st.select_slider(
+                "Rating", options=[1, 2, 3, 4, 5], value=4, key="rating_v2"
             )
+            feedback = st.text_area("Optional feedback", key="feedback_v2")
+            st.button("Save rating (coming Day 2 storage)", disabled=True)
 
-            # Optional debug
             if show_debug:
-                st.markdown("#### Debug: draft")
-                st.code(out.poem)
                 st.markdown("#### Debug: critique (hidden by default)")
                 st.json(out.critique)
 
+    # Improve again: append Version 3/4/5...
     if btn_again:
         last_req = st.session_state["last_request"]
-        base_poem = st.session_state["last_revised"] or st.session_state["last_poem"]
+        base_poem = st.session_state["versions"][-1]["text"]
 
         out = improve_again(llm, last_req, base_poem)
         if not out.ok:
             st.error(out.error_user)
         else:
-            st.session_state["last_critique"] = out.critique
-            st.session_state["last_revised"] = out.revised_poem
+            new_text = out.revised_poem.strip()
+            prev_text = base_poem.strip()
 
-            # Simple output: show revised only
-            st.code(out.revised_poem)
+            # Hard guard: if identical, show error (prevents violating your rule)
+            if new_text == prev_text:
+                st.error(
+                    "Improve again produced the same poem. Try again (or adjust constraints)."
+                )
+            else:
+                st.session_state["last_critique"] = out.critique  # stored but hidden
+                st.session_state["last_revised"] = out.revised_poem
 
-            st.download_button(
-                "Download (.txt)", out.revised_poem, file_name="the_weight_of_words.txt"
-            )
+                next_num = len(st.session_state["versions"]) + 1
+                st.session_state["versions"].append(
+                    {"label": f"Version {next_num}", "text": out.revised_poem}
+                )
 
-            # Optional debug
-            if show_debug:
-                st.markdown("#### Debug: critique (hidden by default)")
-                st.json(out.critique)
+                render_versions()
 
-# Footer: keep the session preview minimal
-st.divider()
-if st.session_state["last_revised"]:
-    st.caption("Latest revised poem (session):")
-    st.code(st.session_state["last_revised"])
+                # Rating UI for newest version
+                st.divider()
+                st.subheader(f"Rate Version {next_num} (helps personalization)")
+                rating = st.select_slider(
+                    "Rating",
+                    options=[1, 2, 3, 4, 5],
+                    value=4,
+                    key=f"rating_v{next_num}",
+                )
+                feedback = st.text_area(
+                    "Optional feedback", key=f"feedback_v{next_num}"
+                )
+                st.button("Save rating (coming Day 2 storage)", disabled=True)
+
+                if show_debug:
+                    st.markdown("#### Debug: critique (hidden by default)")
+                    st.json(out.critique)
+
+    # If no button clicked, still render existing versions
+    if not (btn_fast or btn_full or btn_again):
+        render_versions()

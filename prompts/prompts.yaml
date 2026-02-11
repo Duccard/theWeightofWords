@@ -61,3 +61,7 @@ reviser: |
 
   Rules:
   - Output ONLY the revised poem text (no explanation).
+  
+  Critical:
+  - The revised poem MUST be meaningfully different from the input poem (new wording, images, line breaks).
+  - Do NOT output the exact same text as the input.
