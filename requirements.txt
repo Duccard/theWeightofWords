@@ -5,3 +5,4 @@ langgraph>=0.2.0
 langchain-openai>=0.1.0
 pyyaml>=6.0.1
 tenacity>=8.2.3
+psycopg[binary]>=3.2.0
