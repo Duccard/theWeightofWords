@@ -53,20 +53,15 @@ def build_graphs(llm, prompts: Dict[str, Dict[str, str]], logger):
         schema_str = Critique.model_json_schema()
 
         tpl = prompts["critic"]
-        system_prompt = tpl["system"]
-        # allow {schema} in critic.user if you want later
-        user_prompt = tpl["user"].format(poem=state["poem"], schema=schema_str)
+        system_prompt = tpl["system"].format(schema=schema_str)
+        user_prompt = tpl["user"].format(
+            constraints=req.model_dump(),
+            poem=state["poem"],
+        )
 
         msg = [
             SystemMessage(content=system_prompt),
-            HumanMessage(
-                content=(
-                    f"{user_prompt}\n\n"
-                    f"Constraints: {req.model_dump()}\n\n"
-                    f"Poem:\n{state['poem']}\n\n"
-                    f"Return only valid JSON."
-                )
-            ),
+            HumanMessage(content=user_prompt),
         ]
 
         res = safe_invoke(
@@ -77,8 +72,21 @@ def build_graphs(llm, prompts: Dict[str, Dict[str, str]], logger):
         if not res.ok:
             raise RuntimeError(res.error_debug or "critic_failed")
 
-        critique = TypeAdapter(Critique).validate_json(res.content)
-        return {"critique": critique}
+        raw = (res.content or "").strip()
+
+        # strict parse first
+        try:
+            critique = TypeAdapter(Critique).validate_json(raw)
+            return {"critique": critique}
+        except Exception:
+            # fallback: extract JSON object if model added extra text
+            import re
+
+            m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+            if not m:
+                raise RuntimeError(f"critic_parse_failed: {raw[:200]}")
+            critique = TypeAdapter(Critique).validate_json(m.group(0))
+            return {"critique": critique}
 
     def revise_poem(state: AgentState):
         ctx = _ctx(state)

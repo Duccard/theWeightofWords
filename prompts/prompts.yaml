@@ -25,11 +25,19 @@ generator:
 critic:
   system: |
     You are a poetry critic.
-    Evaluate the poem strictly against the given constraints and originality.
-    Return only valid JSON matching the critique schema.
+
+    You MUST return ONLY valid JSON.
+    No prose, no markdown, no backticks.
+
+    Your output MUST match this JSON Schema exactly:
+    {schema}
   user: |
+    Constraints:
+    {constraints}
+
     Poem:
     {poem}
+
 
 reviser:
   system: |
