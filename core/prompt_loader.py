@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import yaml
 
 from core.logging_setup import setup_logger
 
-_PROMPT_CACHE: Optional[Dict[str, str]] = None
+# Cache to avoid reload churn during Streamlit reruns.
+_PROMPT_CACHE: Optional[Dict[str, Dict[str, str]]] = None
 
 
-def load_prompts(path: str = "prompts/prompts.yaml") -> Dict[str, str]:
+def _validate_prompt_block(name: str, block: Any) -> Dict[str, str]:
+    """
+    Validate a prompt block shaped like:
+      name:
+        system: "..."
+        user: "..."
+    """
+    if not isinstance(block, dict):
+        raise ValueError(f"Prompt '{name}' must be a mapping with keys: system, user")
+
+    system = block.get("system")
+    user = block.get("user")
+
+    if not isinstance(system, str) or not system.strip():
+        raise ValueError(f"Missing or empty prompt: {name}.system")
+    if not isinstance(user, str) or not user.strip():
+        raise ValueError(f"Missing or empty prompt: {name}.user")
+
+    # Return normalized trimmed strings
+    return {"system": system.strip(), "user": user.strip()}
+
+
+def load_prompts(path: str = "prompts/prompts.yaml") -> Dict[str, Dict[str, str]]:
     """
     Load prompts from YAML and validate required keys.
-    Cached to avoid reload churn during Streamlit reruns.
+    Expected structure:
+      generator: {system: "...", user: "..."}
+      critic:    {system: "...", user: "..."}
+      reviser:   {system: "...", user: "..."}
     """
     global _PROMPT_CACHE
     if _PROMPT_CACHE is not None:
@@ -27,15 +53,15 @@ def load_prompts(path: str = "prompts/prompts.yaml") -> Dict[str, str]:
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(
-            "prompts.yaml must contain a mapping of prompt_name -> prompt_text"
+            "prompts.yaml must contain a mapping of prompt_name -> {system,user}"
         )
 
     required = ["generator", "critic", "reviser"]
-    for k in required:
-        v = data.get(k)
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError(f"Missing or empty prompt: {k}")
+    normalized: Dict[str, Dict[str, str]] = {}
+
+    for name in required:
+        normalized[name] = _validate_prompt_block(name, data.get(name))
 
     logger.info(f"Loaded prompts from {path}")
-    _PROMPT_CACHE = data
-    return data
+    _PROMPT_CACHE = normalized
+    return normalized

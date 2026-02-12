@@ -1,6 +1,7 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 
 from agent.schemas import PoemRequest
 from core.logging_setup import setup_logger
@@ -23,11 +24,16 @@ def _graphs(llm):
     return build_graphs(llm, prompts, logger)
 
 
-def generate_only(llm, req: PoemRequest) -> RunOutput:
+def generate_only(llm, req: PoemRequest, user_memory: str = "") -> RunOutput:
     logger = setup_logger()
     full_graph, _ = _graphs(llm)
     try:
-        result = full_graph.invoke({"request": req})
+        result = full_graph.invoke(
+            {
+                "request": req,
+                "user_memory": user_memory or "None",
+            }
+        )
         return RunOutput(ok=True, poem=result.get("poem"))
     except Exception as e:
         logger.error(f"generate_only_failed err={type(e).__name__}:{e}")
@@ -36,11 +42,16 @@ def generate_only(llm, req: PoemRequest) -> RunOutput:
         )
 
 
-def generate_and_improve(llm, req: PoemRequest) -> RunOutput:
+def generate_and_improve(llm, req: PoemRequest, user_memory: str = "") -> RunOutput:
     logger = setup_logger()
     full_graph, _ = _graphs(llm)
     try:
-        result = full_graph.invoke({"request": req})
+        result = full_graph.invoke(
+            {
+                "request": req,
+                "user_memory": user_memory or "None",
+            }
+        )
         critique = result.get("critique")
         return RunOutput(
             ok=True,
@@ -55,11 +66,17 @@ def generate_and_improve(llm, req: PoemRequest) -> RunOutput:
         )
 
 
-def improve_again(llm, req: PoemRequest, poem: str) -> RunOutput:
+def improve_again(llm, req: PoemRequest, poem: str, user_memory: str = "") -> RunOutput:
     logger = setup_logger()
     _, improve_graph = _graphs(llm)
     try:
-        result = improve_graph.invoke({"request": req, "poem": poem})
+        result = improve_graph.invoke(
+            {
+                "request": req,
+                "poem": poem,
+                "user_memory": user_memory or "None",
+            }
+        )
         critique = result.get("critique")
         return RunOutput(
             ok=True,
