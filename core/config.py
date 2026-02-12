@@ -1,26 +1,35 @@
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 
-@dataclass(frozen=True)
+@dataclass
 class AppConfig:
     openai_api_key: str
-    log_level: str = "INFO"
-    database_url: Optional[str] = None  # optional: Supabase Postgres
+    database_url: str | None = None
 
 
 def load_config() -> AppConfig:
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not key:
+    """
+    Loads configuration from environment variables.
+
+    Works with:
+    - local .env (python-dotenv)
+    - Streamlit Cloud Secrets
+    - any cloud provider env vars
+    """
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
         raise ValueError(
-            "Missing OPENAI_API_KEY. Create a .env file (copy .env.example) and set OPENAI_API_KEY."
+            "Missing OPENAI_API_KEY. "
+            "Set it in .env (local) or Streamlit Secrets (cloud)."
         )
 
-    db_url = os.getenv("DATABASE_URL", "").strip() or None
+    database_url = os.getenv("DATABASE_URL")
 
     return AppConfig(
-        openai_api_key=key,
-        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
-        database_url=db_url,
+        openai_api_key=openai_api_key,
+        database_url=database_url,
     )

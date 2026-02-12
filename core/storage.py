@@ -5,7 +5,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.logging_setup import setup_logger
 
@@ -37,6 +37,10 @@ class Storage:
     ) -> int: ...
 
     def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]: ...
+
+    def get_version_averages(
+        self, user_id: str, poem_name: str
+    ) -> Dict[str, Dict[str, Any]]: ...
 
     def update_taste_profile(
         self,
@@ -187,27 +191,41 @@ class SQLiteStorage(Storage):
 
     def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         limit = int(limit)
-        if limit <= 0:
-            return []
-
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT
-                    created_at,
-                    poem_name,
-                    version_label,
-                    rating,
-                    ending_pref,
-                    feedback
+                SELECT created_at, poem_name, version_label, rating, ending_pref, feedback
                 FROM ratings
                 WHERE user_id=?
-                ORDER BY datetime(created_at) DESC, id DESC
+                ORDER BY id DESC
                 LIMIT ?
                 """,
                 (user_id, limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_version_averages(
+        self, user_id: str, poem_name: str
+    ) -> Dict[str, Dict[str, Any]]:
+        poem_name = poem_name.strip() or "Untitled"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT version_label, AVG(rating) AS avg_rating, COUNT(*) AS cnt
+                FROM ratings
+                WHERE user_id=? AND poem_name=?
+                GROUP BY version_label
+                """,
+                (user_id, poem_name),
+            ).fetchall()
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            out[str(r["version_label"])] = {
+                "avg": float(r["avg_rating"]) if r["avg_rating"] is not None else None,
+                "count": int(r["cnt"]),
+            }
+        return out
 
     def update_taste_profile(
         self,
@@ -216,18 +234,10 @@ class SQLiteStorage(Storage):
         rating: int,
         ending_pref: Optional[str],
     ) -> None:
-        """
-        Simple, explainable learning:
-        - If rhyme=True and rating high -> prefer_rhyme_score increases (and decreases otherwise)
-        - Track average line_count weighted by ratings count
-        - Track reading_level counts
-        - Track ending preference counts
-        """
         rhyme = bool(request.get("rhyme", False))
         line_count = int(request.get("line_count", 12))
         reading_level = (request.get("reading_level") or "general").lower()
 
-        # map rating 1..5 => -2..+2 strength
         strength = rating - 3  # 1->-2, 3->0, 5->+2
         rhyme_delta = float(strength if rhyme else -strength)
 
@@ -240,7 +250,6 @@ class SQLiteStorage(Storage):
         }.get(ending)
 
         with self._connect() as conn:
-            # ensure row exists
             conn.execute(
                 "INSERT INTO taste_profile(user_id, total_ratings) VALUES(?,0) ON CONFLICT(user_id) DO NOTHING",
                 (user_id,),
@@ -256,13 +265,11 @@ class SQLiteStorage(Storage):
             total = int(row["total_ratings"])
             new_total = total + 1
 
-            # running average for line_count
             prev_avg = float(row["avg_line_count"])
             new_avg = (prev_avg * total + line_count) / new_total
 
             new_rhyme_score = float(row["prefer_rhyme_score"]) + rhyme_delta
 
-            # update reading level counts
             simple = int(row["reading_simple_count"])
             general = int(row["reading_general_count"])
             advanced = int(row["reading_advanced_count"])
@@ -273,7 +280,6 @@ class SQLiteStorage(Storage):
             else:
                 general += 1
 
-            # ending counts
             soft = int(row["ending_soft_count"])
             twist = int(row["ending_twist_count"])
             punch = int(row["ending_punchline_count"])
@@ -335,15 +341,12 @@ class SQLiteStorage(Storage):
             }
 
         total = int(row["total_ratings"])
-        # guess reading level by max count
         reading_counts = {
             "simple": int(row["reading_simple_count"]),
             "general": int(row["reading_general_count"]),
             "advanced": int(row["reading_advanced_count"]),
         }
-        reading_guess = (
-            max(reading_counts, key=reading_counts.get) if total > 0 else None
-        )
+        reading_guess = max(reading_counts, key=reading_counts.get) if total > 0 else None
 
         ending_counts = {
             "soft": int(row["ending_soft_count"]),
@@ -372,7 +375,6 @@ class PostgresStorage(Storage):
     database_url: str
 
     def backend_name(self) -> str:
-        # Don't leak full URL
         return "postgres:DATABASE_URL"
 
     def _connect(self):
@@ -510,23 +512,14 @@ class PostgresStorage(Storage):
 
     def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         limit = int(limit)
-        if limit <= 0:
-            return []
-
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT
-                        created_at,
-                        poem_name,
-                        version_label,
-                        rating,
-                        ending_pref,
-                        feedback
+                    SELECT created_at, poem_name, version_label, rating, ending_pref, feedback
                     FROM ratings
                     WHERE user_id=%s
-                    ORDER BY created_at DESC, id DESC
+                    ORDER BY id DESC
                     LIMIT %s
                     """,
                     (user_id, limit),
@@ -535,6 +528,32 @@ class PostgresStorage(Storage):
                 cols = [desc[0] for desc in cur.description]
         return [dict(zip(cols, r)) for r in rows]
 
+    d    def get_version_averages(
+        self, user_id: str, poem_name: str
+    ) -> Dict[str, Dict[str, Any]]:
+        poem_name = poem_name.strip() or "Untitled"
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT version_label, AVG(rating) AS avg_rating, COUNT(*) AS cnt
+                    FROM ratings
+                    WHERE user_id=%s AND poem_name=%s
+                    GROUP BY version_label
+                    """,
+                    (user_id, poem_name),
+                )
+                rows = cur.fetchall()
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for version_label, avg_rating, cnt in rows:
+            out[str(version_label)] = {
+                "avg": float(avg_rating) if avg_rating is not None else None,
+                "count": int(cnt),
+            }
+        return out
+
     def update_taste_profile(
         self,
         user_id: str,
@@ -542,7 +561,6 @@ class PostgresStorage(Storage):
         rating: int,
         ending_pref: Optional[str],
     ) -> None:
-        # Reuse exact logic from SQLite version, but in Postgres SQL steps.
         rhyme = bool(request.get("rhyme", False))
         line_count = int(request.get("line_count", 12))
         reading_level = (request.get("reading_level") or "general").lower()
@@ -655,9 +673,7 @@ class PostgresStorage(Storage):
             "general": int(data["reading_general_count"]),
             "advanced": int(data["reading_advanced_count"]),
         }
-        reading_guess = (
-            max(reading_counts, key=reading_counts.get) if total > 0 else None
-        )
+        reading_guess = max(reading_counts, key=reading_counts.get) if total > 0 else None
 
         ending_counts = {
             "soft": int(data["ending_soft_count"]),
