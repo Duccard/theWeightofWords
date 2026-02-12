@@ -127,11 +127,29 @@ def build_user_memory(
             lines = []
             for p in ppl[:10]:
                 note = f" — note: {p['note']}" if p.get("note") else ""
-                lines.append(f"- {p['name']} ({p['relationship']}){note}")
+                rel = p.get("relationship") or "unknown"
+                lines.append(f"- {p['name']} ({rel}){note}")
             parts.append("People memory:\n" + "\n".join(lines))
 
     return "\n\n".join(parts).strip() or "None"
 
+
+# ---------------- Safe defaults (prevents NameError if you break indentation again) ----------------
+model = "gpt-4o-mini"
+temperature = 0.9
+top_p = 0.95
+
+must_include = ""
+avoid = ""
+rhyme = False
+syllable_hints = ""
+no_cliches = True
+reading_level = "general"
+
+audience = ""
+tone = "warm"
+show_debug = False
+# -----------------------------------------------------------------------------------------------
 
 main_tabs = st.tabs(["Write", "People", "Advanced"])
 
@@ -145,37 +163,40 @@ with main_tabs[2]:
     st.json(taste)
 
     st.divider()
-st.markdown("### Recent ratings (last 10)")
-
-try:
-    recent = storage.list_ratings(USER_ID, limit=10)
-    if not recent:
-        st.info("No ratings yet.")
-    else:
-        st.dataframe(recent, use_container_width=True)
-except Exception as e:
-    st.warning(f"Could not load ratings yet: {e}")
+    st.markdown("### Recent ratings (last 10)")
+    try:
+        # Optional: only works if your storage implements list_ratings(user_id, limit)
+        recent = storage.list_ratings(USER_ID, limit=10)  # type: ignore[attr-defined]
+        if not recent:
+            st.info("No ratings yet.")
+        else:
+            st.dataframe(recent, use_container_width=True)
+    except Exception as e:
+        st.info("No ratings yet (or list_ratings not implemented).")
+        st.caption(f"Debug: {e}")
 
     st.divider()
     st.markdown("### Model")
     model = st.selectbox("Model", ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"], index=0)
-    temperature = st.slider("Temperature", 0.0, 1.5, 0.9, 0.1)
-    top_p = st.slider("Top-p", 0.1, 1.0, 0.95, 0.05)
+    temperature = st.slider("Temperature", 0.0, 1.5, float(temperature), 0.1)
+    top_p = st.slider("Top-p", 0.1, 1.0, float(top_p), 0.05)
 
     st.divider()
     st.markdown("### Constraints")
-    must_include = st.text_input("Must include (comma-separated)", value="")
-    avoid = st.text_input("Avoid (comma-separated)", value="")
-    rhyme = st.checkbox("Rhyme", value=False)
-    syllable_hints = st.text_input("Syllable hints (optional)", value="")
-    no_cliches = st.checkbox("No clichés mode", value=True)
+    must_include = st.text_input("Must include (comma-separated)", value=must_include)
+    avoid = st.text_input("Avoid (comma-separated)", value=avoid)
+    rhyme = st.checkbox("Rhyme", value=bool(rhyme))
+    syllable_hints = st.text_input("Syllable hints (optional)", value=syllable_hints)
+    no_cliches = st.checkbox("No clichés mode", value=bool(no_cliches))
     reading_level = st.selectbox(
-        "Reading level", ["simple", "general", "advanced"], index=1
+        "Reading level",
+        ["simple", "general", "advanced"],
+        index=["simple", "general", "advanced"].index(reading_level),
     )
 
     st.divider()
     st.markdown("### Optional extra context")
-    audience = st.text_input("Audience (optional)", value="")
+    audience = st.text_input("Audience (optional)", value=audience)
     tone = st.selectbox(
         "Tone",
         [
@@ -189,10 +210,21 @@ except Exception as e:
             "surreal",
             "minimalist",
         ],
-        index=0,
+        index=[
+            "warm",
+            "funny",
+            "romantic",
+            "somber",
+            "hopeful",
+            "angry",
+            "motivational",
+            "surreal",
+            "minimalist",
+        ].index(tone),
     )
-    show_debug = st.checkbox("Show internal debug", value=False)
+    show_debug = st.checkbox("Show internal debug", value=bool(show_debug))
 
+# Build LLM AFTER advanced variables exist
 llm = create_llm(cfg, model=model, temperature=temperature, top_p=top_p)
 
 # ================= PEOPLE =================
@@ -221,7 +253,7 @@ with main_tabs[1]:
         st.info("No people saved yet.")
     else:
         for p in people:
-            st.markdown(f"**{p['name']}** — *{p['relationship']}*")
+            st.markdown(f"**{p['name']}** — *{p.get('relationship') or 'unknown'}*")
             if p.get("note"):
                 st.caption(p["note"])
 
@@ -484,6 +516,7 @@ with main_tabs[0]:
 
     render_versions()
 
+    # Ask to rate any version that exists, but only once each
     for v in st.session_state["versions"]:
         rating_form(v["label"], v["text"])
 
