@@ -74,6 +74,61 @@ def stars_label(n: int) -> str:
     return "⭐" * n + "☆" * (5 - n)
 
 
+def build_user_memory(
+    storage_obj,
+    user_id: str,
+    include_prefs: bool,
+    include_people: bool,
+) -> str:
+    parts = []
+
+    if include_prefs:
+        taste = storage_obj.get_taste_profile(user_id) or {}
+        total = int(taste.get("total_ratings", 0) or 0)
+
+        if total <= 0:
+            parts.append("Preferences learned from ratings: none yet.")
+        else:
+            rhyme_score = float(taste.get("prefer_rhyme_score", 0.0) or 0.0)
+            if rhyme_score > 1:
+                rhyme_hint = "prefers rhyme"
+            elif rhyme_score < -1:
+                rhyme_hint = "prefers no rhyme"
+            else:
+                rhyme_hint = "no strong rhyme preference"
+
+            avg_lines = taste.get("avg_line_count", None)
+            avg_lines_str = (
+                str(int(avg_lines))
+                if isinstance(avg_lines, (int, float))
+                else "unknown"
+            )
+
+            reading_guess = taste.get("reading_level_guess") or "unknown"
+            ending_guess = taste.get("ending_guess") or "unknown"
+
+            parts.append(
+                "Preferences learned from ratings:\n"
+                f"- {rhyme_hint}\n"
+                f"- typical length: ~{avg_lines_str} lines\n"
+                f"- reading level: {reading_guess}\n"
+                f"- ending style: {ending_guess}\n"
+            )
+
+    if include_people:
+        ppl = storage_obj.list_people(user_id) or []
+        if not ppl:
+            parts.append("People memory: none yet.")
+        else:
+            lines = []
+            for p in ppl[:10]:
+                note = f" — note: {p['note']}" if p.get("note") else ""
+                lines.append(f"- {p['name']} ({p['relationship']}){note}")
+            parts.append("People memory:\n" + "\n".join(lines))
+
+    return "\n\n".join(parts).strip() or "None"
+
+
 main_tabs = st.tabs(["Write", "People", "Advanced"])
 
 # ================= ADVANCED =================
@@ -157,6 +212,21 @@ with main_tabs[1]:
 # ================= WRITE =================
 with main_tabs[0]:
     st.subheader("Write")
+
+    # ✅ toggles for memory usage
+    colA, colB = st.columns([1, 1])
+    with colA:
+        apply_prefs = st.toggle("Apply my preferences", value=True)
+    with colB:
+        use_people = st.toggle("Use people memory", value=True)
+
+    user_memory = build_user_memory(
+        storage, USER_ID, include_prefs=apply_prefs, include_people=use_people
+    )
+
+    # Optional: show what memory is being injected (only if debug)
+    if st.checkbox("Show injected memory (debug)", value=False):
+        st.code(user_memory)
 
     poem_name = st.text_input(
         "Poem Name",
@@ -293,7 +363,7 @@ with main_tabs[0]:
         ending_key = f"ending_{form_key}"
 
         with st.form(key=form_key, clear_on_submit=False):
-            rating = st.radio(
+            st.radio(
                 "Rating",
                 STAR_OPTIONS,
                 index=3,
@@ -301,13 +371,13 @@ with main_tabs[0]:
                 horizontal=True,
                 key=rating_key,
             )
-            ending_pref = st.selectbox(
+            st.selectbox(
                 "Ending preference (optional)",
                 ["", "soft", "twist", "punchline", "hopeful"],
                 index=0,
                 key=ending_key,
             )
-            feedback = st.text_area("Optional feedback", key=feedback_key)
+            st.text_area("Optional feedback", key=feedback_key)
             submitted = st.form_submit_button("Submit rating")
 
         if submitted:
@@ -336,7 +406,7 @@ with main_tabs[0]:
 
     # Generate only => Version 1
     if btn_fast:
-        out = generate_only(llm, req)
+        out = generate_only(llm, req, user_memory=user_memory)
         if not out.ok:
             st.error(out.error_user)
         else:
@@ -350,7 +420,7 @@ with main_tabs[0]:
 
     # Generate + Improve => Version 1 + Version 2 (Upgraded)
     if btn_full:
-        out = generate_and_improve(llm, req)
+        out = generate_and_improve(llm, req, user_memory=user_memory)
         if not out.ok:
             st.error(out.error_user)
         else:
@@ -375,7 +445,7 @@ with main_tabs[0]:
         last_req = st.session_state["last_request"]
         base_poem = st.session_state["versions"][-1]["text"]
 
-        out = improve_again(llm, last_req, base_poem)
+        out = improve_again(llm, last_req, base_poem, user_memory=user_memory)
         if not out.ok:
             st.error(out.error_user)
         else:
