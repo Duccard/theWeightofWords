@@ -5,7 +5,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from core.logging_setup import setup_logger
 
@@ -17,10 +17,13 @@ SQLITE_PATH = Path("data/app.db")
 class Storage:
     def init(self) -> None: ...
     def backend_name(self) -> str: ...
+
     def add_person(
         self, user_id: str, name: str, relationship: str, note: str | None
     ) -> None: ...
+
     def list_people(self, user_id: str) -> List[Dict[str, Any]]: ...
+
     def add_rating(
         self,
         user_id: str,
@@ -32,6 +35,9 @@ class Storage:
         ending_pref: Optional[str],
         feedback: Optional[str],
     ) -> int: ...
+
+    def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]: ...
+
     def update_taste_profile(
         self,
         user_id: str,
@@ -39,6 +45,7 @@ class Storage:
         rating: int,
         ending_pref: Optional[str],
     ) -> None: ...
+
     def get_taste_profile(self, user_id: str) -> Dict[str, Any]: ...
 
 
@@ -178,6 +185,30 @@ class SQLiteStorage(Storage):
             )
             return int(cur.lastrowid)
 
+    def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        limit = int(limit)
+        if limit <= 0:
+            return []
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    created_at,
+                    poem_name,
+                    version_label,
+                    rating,
+                    ending_pref,
+                    feedback
+                FROM ratings
+                WHERE user_id=?
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def update_taste_profile(
         self,
         user_id: str,
@@ -189,7 +220,7 @@ class SQLiteStorage(Storage):
         Simple, explainable learning:
         - If rhyme=True and rating high -> prefer_rhyme_score increases (and decreases otherwise)
         - Track average line_count weighted by ratings count
-        - Track reading_level counts weighted by rating bucket
+        - Track reading_level counts
         - Track ending preference counts
         """
         rhyme = bool(request.get("rhyme", False))
@@ -476,6 +507,33 @@ class PostgresStorage(Storage):
                 new_id = cur.fetchone()[0]
             conn.commit()
         return int(new_id)
+
+    def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        limit = int(limit)
+        if limit <= 0:
+            return []
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        created_at,
+                        poem_name,
+                        version_label,
+                        rating,
+                        ending_pref,
+                        feedback
+                    FROM ratings
+                    WHERE user_id=%s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, r)) for r in rows]
 
     def update_taste_profile(
         self,

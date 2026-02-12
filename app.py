@@ -145,6 +145,18 @@ with main_tabs[2]:
     st.json(taste)
 
     st.divider()
+st.markdown("### Recent ratings (last 10)")
+
+try:
+    recent = storage.list_ratings(USER_ID, limit=10)
+    if not recent:
+        st.info("No ratings yet.")
+    else:
+        st.dataframe(recent, use_container_width=True)
+except Exception as e:
+    st.warning(f"Could not load ratings yet: {e}")
+
+    st.divider()
     st.markdown("### Model")
     model = st.selectbox("Model", ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"], index=0)
     temperature = st.slider("Temperature", 0.0, 1.5, 0.9, 0.1)
