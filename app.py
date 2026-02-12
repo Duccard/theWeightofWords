@@ -61,11 +61,15 @@ for k in [
     "last_revised",
     "versions",
     "poem_name",
+    "rated_versions",  # ✅ so we do NOT ask to rate the same version again
 ]:
     st.session_state.setdefault(k, None)
 
 if st.session_state["versions"] is None:
     st.session_state["versions"] = []
+
+if st.session_state["rated_versions"] is None:
+    st.session_state["rated_versions"] = set()
 
 STAR_OPTIONS = [1, 2, 3, 4, 5]
 
@@ -224,7 +228,7 @@ with main_tabs[0]:
         storage, USER_ID, include_prefs=apply_prefs, include_people=use_people
     )
 
-    # Optional: show what memory is being injected (only if debug)
+    # Optional debug
     if st.checkbox("Show injected memory (debug)", value=False):
         st.code(user_memory)
 
@@ -324,11 +328,66 @@ with main_tabs[0]:
 
     if btn_clear:
         st.session_state["versions"] = []
+        st.session_state["rated_versions"] = set()
         st.session_state["last_request"] = None
         st.session_state["last_poem"] = None
         st.session_state["last_critique"] = None
         st.session_state["last_revised"] = None
         st.rerun()
+
+    # ---- Button actions: update state then rerun ----
+    if btn_fast:
+        out = generate_only(llm, req, user_memory=user_memory)
+        if not out.ok:
+            st.error(out.error_user)
+        else:
+            st.session_state["last_request"] = req
+            st.session_state["last_poem"] = out.poem
+            st.session_state["last_critique"] = None
+            st.session_state["last_revised"] = None
+            st.session_state["versions"] = [{"label": "Version 1", "text": out.poem}]
+            st.rerun()
+
+    if btn_full:
+        out = generate_and_improve(llm, req, user_memory=user_memory)
+        if not out.ok:
+            st.error(out.error_user)
+        else:
+            st.session_state["last_request"] = req
+            st.session_state["last_poem"] = out.poem
+            st.session_state["last_critique"] = out.critique
+            st.session_state["last_revised"] = out.revised_poem
+            st.session_state["versions"] = [
+                {"label": "Version 1", "text": out.poem},
+                {"label": "Version 2 (Upgraded)", "text": out.revised_poem},
+            ]
+            st.rerun()
+
+    if btn_again:
+        last_req = st.session_state["last_request"]
+        base_poem = st.session_state["versions"][-1]["text"]
+
+        out = improve_again(llm, last_req, base_poem, user_memory=user_memory)
+        if not out.ok:
+            st.error(out.error_user)
+        else:
+            new_text = (out.revised_poem or "").strip()
+            prev_text = (base_poem or "").strip()
+
+            if new_text == prev_text:
+                st.error(
+                    "Improve again produced the same poem. Try again (or adjust constraints)."
+                )
+            else:
+                st.session_state["last_critique"] = out.critique
+                st.session_state["last_revised"] = out.revised_poem
+
+                next_num = len(st.session_state["versions"]) + 1
+                label = f"Version {next_num} (Upgraded)"
+                st.session_state["versions"].append(
+                    {"label": label, "text": out.revised_poem}
+                )
+                st.rerun()
 
     st.divider()
     st.subheader("Output")
@@ -352,6 +411,10 @@ with main_tabs[0]:
             )
 
     def rating_form(version_label: str, poem_text: str):
+        # ✅ don't ask again if already rated
+        if version_label in st.session_state["rated_versions"]:
+            return
+
         st.divider()
         st.subheader(f"Rate {version_label}")
 
@@ -398,80 +461,20 @@ with main_tabs[0]:
                     rating=int(st.session_state[rating_key]),
                     ending_pref=(st.session_state[ending_key] or None),
                 )
+
+                st.session_state["rated_versions"].add(version_label)
                 st.success(
                     f"Saved rating: {stars_label(int(st.session_state[rating_key]))}"
                 )
+                st.rerun()
             except Exception as e:
                 st.error(str(e))
 
-    # Generate only => Version 1
-    if btn_fast:
-        out = generate_only(llm, req, user_memory=user_memory)
-        if not out.ok:
-            st.error(out.error_user)
-        else:
-            st.session_state["last_request"] = req
-            st.session_state["last_poem"] = out.poem
-            st.session_state["last_critique"] = None
-            st.session_state["last_revised"] = None
-            st.session_state["versions"] = [{"label": "Version 1", "text": out.poem}]
-            render_versions()
-            rating_form("Version 1", out.poem)
+    render_versions()
 
-    # Generate + Improve => Version 1 + Version 2 (Upgraded)
-    if btn_full:
-        out = generate_and_improve(llm, req, user_memory=user_memory)
-        if not out.ok:
-            st.error(out.error_user)
-        else:
-            st.session_state["last_request"] = req
-            st.session_state["last_poem"] = out.poem
-            st.session_state["last_critique"] = out.critique  # stored but hidden
-            st.session_state["last_revised"] = out.revised_poem
+    for v in st.session_state["versions"]:
+        rating_form(v["label"], v["text"])
 
-            st.session_state["versions"] = [
-                {"label": "Version 1", "text": out.poem},
-                {"label": "Version 2 (Upgraded)", "text": out.revised_poem},
-            ]
-            render_versions()
-            rating_form("Version 2 (Upgraded)", out.revised_poem)
-
-            if show_debug:
-                st.markdown("#### Debug: critique (hidden by default)")
-                st.json(out.critique)
-
-    # Improve again => append Version N (Upgraded)
-    if btn_again:
-        last_req = st.session_state["last_request"]
-        base_poem = st.session_state["versions"][-1]["text"]
-
-        out = improve_again(llm, last_req, base_poem, user_memory=user_memory)
-        if not out.ok:
-            st.error(out.error_user)
-        else:
-            new_text = out.revised_poem.strip()
-            prev_text = base_poem.strip()
-
-            if new_text == prev_text:
-                st.error(
-                    "Improve again produced the same poem. Try again (or adjust constraints)."
-                )
-            else:
-                st.session_state["last_critique"] = out.critique
-                st.session_state["last_revised"] = out.revised_poem
-
-                next_num = len(st.session_state["versions"]) + 1
-                label = f"Version {next_num} (Upgraded)"
-                st.session_state["versions"].append(
-                    {"label": label, "text": out.revised_poem}
-                )
-
-                render_versions()
-                rating_form(label, out.revised_poem)
-
-                if show_debug:
-                    st.markdown("#### Debug: critique (hidden by default)")
-                    st.json(out.critique)
-
-    if not (btn_fast or btn_full or btn_again):
-        render_versions()
+    if show_debug and st.session_state.get("last_critique"):
+        st.markdown("#### Debug: critique (hidden by default)")
+        st.json(st.session_state["last_critique"])
