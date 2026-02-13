@@ -90,69 +90,103 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
 
-    /* ---------- GLOBAL TEXT COLOR ---------- */
-    html, body, [class*="css"] {
+    /* --------- TEXT ON BACKGROUND (labels, headers, captions) --------- */
+    html, body, .stApp, [class*="css"] {
+        color: #ffffff !important;
+    }
+    .stMarkdown, .stText, .stCaption, .stSubheader, .stHeader, .stTitle {
         color: #ffffff !important;
     }
 
-    /* ---------- TITLE ---------- */
+    /* Streamlit labels (Write / Poem Name / Output / etc.) */
+    label, .stTextInput label, .stTextArea label, .stSelectbox label, .stSlider label {
+        color: #ffffff !important;
+    }
+
+    /* --------- TITLE --------- */
     .app-title {
         font-family: 'Great Vibes', cursive;
         font-size: 72px;
         font-weight: 400;
         text-align: center;
-        color: white;
+        color: #ffffff;
         margin-bottom: 0.2em;
     }
-
     .app-subtitle {
         text-align: center;
         font-size: 1.1rem;
         opacity: 0.9;
-        color: white;
-        margin-bottom: 2rem;
+        color: #ffffff;
+        margin-bottom: 1.6rem;
     }
 
-    /* ---------- POEM OUTPUT ---------- */
+    /* --------- INPUTS: white field, BLACK typed text --------- */
+    /* Covers text inputs, text areas, selects */
+    .stTextInput input,
+    .stTextArea textarea,
+    .stSelectbox [role="combobox"],
+    .stSelectbox input {
+        background: rgba(255, 255, 255, 0.96) !important;
+        color: #000000 !important;
+        border: 1px solid rgba(255, 255, 255, 0.85) !important;
+        border-radius: 10px !important;
+    }
+
+    /* Placeholder text a bit gray */
+    .stTextInput input::placeholder,
+    .stTextArea textarea::placeholder {
+        color: rgba(0,0,0,0.55) !important;
+    }
+
+    /* Select dropdown menu items should be black on white */
+    div[role="listbox"] * {
+        color: #000000 !important;
+    }
+
+    /* --------- POEM OUTPUT / CODE BLOCKS: transparent-ish, white text --------- */
     pre, code {
         background: rgba(0, 0, 0, 0.35) !important;
-        color: white !important;
+        color: #ffffff !important;
         border-radius: 12px;
         font-size: 1rem;
     }
 
-    /* ---------- BUTTONS ---------- */
+    /* --------- BUTTONS --------- */
+    /* Default buttons visible */
     .stButton > button {
         background-color: rgba(255, 255, 255, 0.18) !important;
-        color: white !important;
+        color: #ffffff !important;
         border: 1px solid rgba(255, 255, 255, 0.45) !important;
         border-radius: 10px !important;
-        font-weight: 500;
+        font-weight: 600 !important;
         transition: all 0.2s ease-in-out;
     }
-
     .stButton > button:hover {
         background-color: rgba(255, 255, 255, 0.32) !important;
-        border-color: white !important;
+        border-color: #ffffff !important;
     }
 
-    /* ---------- TABS ---------- */
+    /* Keep PRIMARY (Generate + Improve) orange like Streamlit default */
+    .stButton > button[kind="primary"],
+    .stButton > button[data-testid="baseButton-primary"] {
+        background-color: #ff4b4b !important; /* Streamlit "primary" default vibe */
+        color: #ffffff !important;
+        border: 1px solid rgba(255,255,255,0.25) !important;
+    }
+    .stButton > button[kind="primary"]:hover,
+    .stButton > button[data-testid="baseButton-primary"]:hover {
+        filter: brightness(1.05);
+    }
+
+    /* --------- TABS --------- */
     button[data-baseweb="tab"] {
-        color: white !important;
-        font-weight: 500;
+        color: #ffffff !important;
+        font-weight: 600;
     }
-
     button[data-baseweb="tab"][aria-selected="true"] {
-        border-bottom: 3px solid white !important;
+        border-bottom: 3px solid #ffffff !important;
     }
 
-    /* ---------- INPUTS ---------- */
-    input, textarea, select {
-        background: rgba(0, 0, 0, 0.35) !important;
-        color: white !important;
-        border: 1px solid rgba(255, 255, 255, 0.35) !important;
-        border-radius: 8px !important;
-    }
     </style>
 
     <div class="app-title">The Weight of Words</div>
@@ -161,25 +195,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-# Your original title + caption (kept, now styled by CSS)
-st.title("The Weight of Words")
-st.caption("Beautiful poem generator")
-
-# ---- Config validation ----
-try:
-    cfg = load_config()
-except Exception as e:
-    st.error(str(e))
-    st.stop()
-
-# ---- Storage init (cloud-ready) ----
-storage = get_storage()
-try:
-    storage.init()
-except Exception as e:
-    st.error(f"Storage init failed: {e}")
-    st.stop()
 
 # stable per browser session (until auth)
 if "user_id" not in st.session_state:
