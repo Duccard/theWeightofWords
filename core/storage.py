@@ -1,615 +1,698 @@
 from __future__ import annotations
 
-import uuid
-import streamlit as st
-from dotenv import load_dotenv
+import json
+import os
+import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from core.config import load_config
 from core.logging_setup import setup_logger
-from core.llm_factory import create_llm
-from core.orchestrator import generate_only, generate_and_improve, improve_again
-from agent.schemas import PoemRequest
-from core.storage import get_storage
 
-load_dotenv()
-logger = setup_logger()
+SQLITE_PATH = Path("data/app.db")
 
-st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
-st.title("The Weight of Words")
-st.caption("Beautiful poem generator")
-
-# ---- Config validation ----
-try:
-    cfg = load_config()
-except Exception as e:
-    st.error(str(e))
-    st.stop()
-
-# ---- Storage init (cloud-ready) ----
-storage = get_storage()
-try:
-    storage.init()
-except Exception as e:
-    st.error(f"Storage init failed: {e}")
-    st.stop()
-
-# stable per browser session (until auth)
-if "user_id" not in st.session_state:
-    st.session_state["user_id"] = "user_" + str(uuid.uuid4())[:8]
-USER_ID = st.session_state["user_id"]
-
-# ---- Writer style presets (removed custom option) ----
-WRITER_STYLES = {
-    "Default": None,
-    "William Shakespeare": "elevated lyrical drama, balanced cadence, rich metaphor (no imitation or copying)",
-    "Emily Dickinson": "compressed lines, sharp pauses, quiet intensity (no imitation or copying)",
-    "Walt Whitman": "expansive free verse, long lines, generous human warmth (no imitation or copying)",
-    "Pablo Neruda": "sensuous concrete imagery, emotional depth (no imitation or copying)",
-    "T.S. Eliot": "modernist precision, surprising imagery (no imitation or copying)",
-    "Langston Hughes": "musical cadence, plainspoken power (no imitation or copying)",
-    "Rumi": "spiritual metaphor, luminous simplicity (no imitation or copying)",
-    "Sylvia Plath": "intense imagery, emotional voltage (no imitation or copying)",
-    "Seamus Heaney": "earthy tactile imagery, reflective lyricism (no imitation or copying)",
-    "Matsuo Bashō": "minimalist stillness, nature clarity (no imitation or copying)",
-    "Alexander Pushkin": "lyrical clarity, narrative elegance (no imitation or copying)",
-}
-
-# ---- Session state ----
-for k in [
-    "last_request",
-    "last_poem",
-    "last_critique",
-    "last_revised",
-    "versions",
-    "poem_name",
-    "rated_versions",
-]:
-    st.session_state.setdefault(k, None)
-
-if st.session_state["versions"] is None:
-    st.session_state["versions"] = []
-
-if st.session_state["rated_versions"] is None:
-    st.session_state["rated_versions"] = set()
-
-# Advanced defaults
-st.session_state.setdefault("adv_model", "gpt-4o-mini")
-st.session_state.setdefault("adv_temperature", 0.9)
-st.session_state.setdefault("adv_top_p", 0.95)
-
-st.session_state.setdefault("adv_audience", "")
-
-# Move these to advanced top
-st.session_state.setdefault("adv_apply_prefs", True)
-st.session_state.setdefault("adv_use_people", True)
-st.session_state.setdefault("adv_show_injected_memory", False)
-
-st.session_state.setdefault("adv_rhyme", False)
-st.session_state.setdefault("adv_no_cliches", True)
-st.session_state.setdefault("adv_reading_level", "general")
-
-st.session_state.setdefault("adv_must_include", "")
-st.session_state.setdefault("adv_avoid", "")
-st.session_state.setdefault("adv_syllable_hints", "")
-
-st.session_state.setdefault("adv_tone", "warm")
-st.session_state.setdefault("adv_show_debug", False)
-
-STAR_OPTIONS = [1, 2, 3, 4, 5]
+# --------- Public API (what app.py uses) ---------
 
 
-def stars_label(n: int) -> str:
-    return "⭐" * n + "☆" * (5 - n)
+class Storage:
+    def init(self) -> None: ...
+    def backend_name(self) -> str: ...
+
+    def add_person(
+        self, user_id: str, name: str, relationship: str, note: str | None
+    ) -> None: ...
+
+    def list_people(self, user_id: str) -> List[Dict[str, Any]]: ...
+
+    def add_rating(
+        self,
+        user_id: str,
+        poem_name: str,
+        version_label: str,
+        request: Dict[str, Any],
+        poem_text: str,
+        rating: int,
+        ending_pref: Optional[str],
+        feedback: Optional[str],
+    ) -> int: ...
+
+    def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]: ...
+
+    def get_version_averages(
+        self, user_id: str, poem_name: str
+    ) -> Dict[str, Dict[str, Any]]: ...
+
+    def update_taste_profile(
+        self,
+        user_id: str,
+        request: Dict[str, Any],
+        rating: int,
+        ending_pref: Optional[str],
+    ) -> None: ...
+
+    def get_taste_profile(self, user_id: str) -> Dict[str, Any]: ...
 
 
-def build_user_memory(
-    storage_obj, user_id: str, include_prefs: bool, include_people: bool
-) -> str:
-    parts = []
+def get_storage() -> Storage:
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    if db_url:
+        return PostgresStorage(db_url)
+    return SQLiteStorage(SQLITE_PATH)
 
-    if include_prefs:
-        taste = storage_obj.get_taste_profile(user_id) or {}
-        total = int(taste.get("total_ratings", 0) or 0)
 
-        if total <= 0:
-            parts.append("Preferences learned from ratings: none yet.")
-        else:
-            rhyme_score = float(taste.get("prefer_rhyme_score", 0.0) or 0.0)
-            if rhyme_score > 1:
-                rhyme_hint = "prefers rhyme"
-            elif rhyme_score < -1:
-                rhyme_hint = "prefers no rhyme"
+# --------- SQLite implementation (local fallback) ---------
+
+
+@dataclass
+class SQLiteStorage(Storage):
+    path: Path
+
+    def _connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def backend_name(self) -> str:
+        return f"sqlite:{self.path}"
+
+    def init(self) -> None:
+        logger = setup_logger()
+        with self._connect() as conn:
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                relationship TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            """
+            )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                poem_name TEXT NOT NULL,
+                version_label TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                poem_text TEXT NOT NULL,
+                rating INTEGER NOT NULL,
+                ending_pref TEXT,
+                feedback TEXT
+            );
+            """
+            )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS taste_profile (
+                user_id TEXT PRIMARY KEY,
+                total_ratings INTEGER NOT NULL DEFAULT 0,
+
+                prefer_rhyme_score REAL NOT NULL DEFAULT 0.0,
+                avg_line_count REAL NOT NULL DEFAULT 0.0,
+
+                reading_simple_count INTEGER NOT NULL DEFAULT 0,
+                reading_general_count INTEGER NOT NULL DEFAULT 0,
+                reading_advanced_count INTEGER NOT NULL DEFAULT 0,
+
+                ending_soft_count INTEGER NOT NULL DEFAULT 0,
+                ending_twist_count INTEGER NOT NULL DEFAULT 0,
+                ending_punchline_count INTEGER NOT NULL DEFAULT 0,
+                ending_hopeful_count INTEGER NOT NULL DEFAULT 0,
+
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            """
+            )
+        logger.info(f"Storage initialized ({self.backend_name()})")
+
+    def add_person(
+        self, user_id: str, name: str, relationship: str, note: str | None
+    ) -> None:
+        name = name.strip()
+        relationship = relationship.strip()
+        if not name:
+            raise ValueError("Person name is required.")
+        if not relationship:
+            raise ValueError("Relationship is required.")
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO people(user_id, name, relationship, note) VALUES(?,?,?,?)",
+                (user_id, name, relationship, note.strip() if note else None),
+            )
+
+    def list_people(self, user_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, name, relationship, note, created_at FROM people WHERE user_id=? ORDER BY id DESC",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_rating(
+        self,
+        user_id: str,
+        poem_name: str,
+        version_label: str,
+        request: Dict[str, Any],
+        poem_text: str,
+        rating: int,
+        ending_pref: Optional[str],
+        feedback: Optional[str],
+    ) -> int:
+        rating = int(rating)
+        if rating < 1 or rating > 5:
+            raise ValueError("Rating must be 1..5")
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO ratings(user_id, poem_name, version_label, request_json, poem_text, rating, ending_pref, feedback)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    user_id,
+                    poem_name.strip() or "Untitled",
+                    version_label,
+                    json.dumps(request, ensure_ascii=False),
+                    poem_text,
+                    rating,
+                    ending_pref,
+                    feedback.strip() if feedback else None,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        limit = int(limit)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT created_at, poem_name, version_label, rating, ending_pref, feedback
+                FROM ratings
+                WHERE user_id=?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_version_averages(
+        self, user_id: str, poem_name: str
+    ) -> Dict[str, Dict[str, Any]]:
+        poem_name = poem_name.strip() or "Untitled"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT version_label, AVG(rating) AS avg_rating, COUNT(*) AS cnt
+                FROM ratings
+                WHERE user_id=? AND poem_name=?
+                GROUP BY version_label
+                """,
+                (user_id, poem_name),
+            ).fetchall()
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            out[str(r["version_label"])] = {
+                "avg": float(r["avg_rating"]) if r["avg_rating"] is not None else None,
+                "count": int(r["cnt"]),
+            }
+        return out
+
+    def update_taste_profile(
+        self,
+        user_id: str,
+        request: Dict[str, Any],
+        rating: int,
+        ending_pref: Optional[str],
+    ) -> None:
+        rhyme = bool(request.get("rhyme", False))
+        line_count = int(request.get("line_count", 12))
+        reading_level = (request.get("reading_level") or "general").lower()
+
+        strength = rating - 3  # 1->-2, 3->0, 5->+2
+        rhyme_delta = float(strength if rhyme else -strength)
+
+        ending = (ending_pref or "").lower().strip()
+        ending_col = {
+            "soft": "ending_soft_count",
+            "twist": "ending_twist_count",
+            "punchline": "ending_punchline_count",
+            "hopeful": "ending_hopeful_count",
+        }.get(ending)
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO taste_profile(user_id, total_ratings) VALUES(?,0) ON CONFLICT(user_id) DO NOTHING",
+                (user_id,),
+            )
+
+            row = conn.execute(
+                "SELECT total_ratings, prefer_rhyme_score, avg_line_count, reading_simple_count, reading_general_count, reading_advanced_count, "
+                "ending_soft_count, ending_twist_count, ending_punchline_count, ending_hopeful_count "
+                "FROM taste_profile WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+
+            total = int(row["total_ratings"])
+            new_total = total + 1
+
+            prev_avg = float(row["avg_line_count"])
+            new_avg = (prev_avg * total + line_count) / new_total
+
+            new_rhyme_score = float(row["prefer_rhyme_score"]) + rhyme_delta
+
+            simple = int(row["reading_simple_count"])
+            general = int(row["reading_general_count"])
+            advanced = int(row["reading_advanced_count"])
+            if reading_level == "simple":
+                simple += 1
+            elif reading_level == "advanced":
+                advanced += 1
             else:
-                rhyme_hint = "no strong rhyme preference"
+                general += 1
 
-            avg_lines = taste.get("avg_line_count", None)
-            avg_lines_str = (
-                str(int(avg_lines))
-                if isinstance(avg_lines, (int, float))
-                else "unknown"
+            soft = int(row["ending_soft_count"])
+            twist = int(row["ending_twist_count"])
+            punch = int(row["ending_punchline_count"])
+            hopeful = int(row["ending_hopeful_count"])
+            if ending_col == "ending_soft_count":
+                soft += 1
+            elif ending_col == "ending_twist_count":
+                twist += 1
+            elif ending_col == "ending_punchline_count":
+                punch += 1
+            elif ending_col == "ending_hopeful_count":
+                hopeful += 1
+
+            conn.execute(
+                """
+                UPDATE taste_profile SET
+                    total_ratings=?,
+                    prefer_rhyme_score=?,
+                    avg_line_count=?,
+                    reading_simple_count=?,
+                    reading_general_count=?,
+                    reading_advanced_count=?,
+                    ending_soft_count=?,
+                    ending_twist_count=?,
+                    ending_punchline_count=?,
+                    ending_hopeful_count=?,
+                    updated_at=datetime('now')
+                WHERE user_id=?
+                """,
+                (
+                    new_total,
+                    new_rhyme_score,
+                    new_avg,
+                    simple,
+                    general,
+                    advanced,
+                    soft,
+                    twist,
+                    punch,
+                    hopeful,
+                    user_id,
+                ),
             )
-            reading_guess = taste.get("reading_level_guess") or "unknown"
-            ending_guess = taste.get("ending_guess") or "unknown"
 
-            parts.append(
-                "Preferences learned from ratings:\n"
-                f"- {rhyme_hint}\n"
-                f"- typical length: ~{avg_lines_str} lines\n"
-                f"- reading level: {reading_guess}\n"
-                f"- ending style: {ending_guess}\n"
-            )
+    def get_taste_profile(self, user_id: str) -> Dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM taste_profile WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
 
-    if include_people:
-        ppl = storage_obj.list_people(user_id) or []
-        if not ppl:
-            parts.append("People memory: none yet.")
-        else:
-            lines = []
-            for p in ppl[:10]:
-                note = f" — note: {p['note']}" if p.get("note") else ""
-                lines.append(f"- {p['name']} ({p['relationship']}){note}")
-            parts.append("People memory:\n" + "\n".join(lines))
+        if not row:
+            return {
+                "total_ratings": 0,
+                "prefer_rhyme_score": 0.0,
+                "avg_line_count": None,
+                "reading_level_guess": None,
+                "ending_guess": None,
+            }
 
-    return "\n\n".join(parts).strip() or "None"
-
-
-def person_icon(relationship: str) -> str:
-    rel = (relationship or "").lower()
-    if "girlfriend" in rel or "boyfriend" in rel or "partner" in rel:
-        return "❤️"
-    if "friend" in rel:
-        return "🧑‍🤝‍🧑"
-    if "boss" in rel or "manager" in rel:
-        return "🧑‍💼"
-    if (
-        "mom" in rel
-        or "mother" in rel
-        or "dad" in rel
-        or "father" in rel
-        or "parent" in rel
-    ):
-        return "👪"
-    if "wife" in rel or "husband" in rel:
-        return "💍"
-    return "👤"
-
-
-main_tabs = st.tabs(["Write", "People", "Advanced"])
-
-# ================= ADVANCED =================
-with main_tabs[2]:
-    st.subheader("Advanced settings")
-    st.caption(f"Storage backend: **{storage.backend_name()}**")
-
-    st.markdown("### Personalization & constraints")
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1:
-        st.session_state["adv_apply_prefs"] = st.toggle(
-            "Apply my preferences", value=bool(st.session_state["adv_apply_prefs"])
-        )
-    with c2:
-        st.session_state["adv_use_people"] = st.toggle(
-            "Use people memory", value=bool(st.session_state["adv_use_people"])
-        )
-    with c3:
-        st.session_state["adv_show_injected_memory"] = st.toggle(
-            "Show injected memory",
-            value=bool(st.session_state["adv_show_injected_memory"]),
+        total = int(row["total_ratings"])
+        reading_counts = {
+            "simple": int(row["reading_simple_count"]),
+            "general": int(row["reading_general_count"]),
+            "advanced": int(row["reading_advanced_count"]),
+        }
+        reading_guess = (
+            max(reading_counts, key=reading_counts.get) if total > 0 else None
         )
 
-    c4, c5, c6 = st.columns([1, 1, 1])
-    with c4:
-        st.session_state["adv_rhyme"] = st.checkbox(
-            "Rhyme", value=bool(st.session_state["adv_rhyme"])
-        )
-    with c5:
-        st.session_state["adv_no_cliches"] = st.checkbox(
-            "No clichés mode", value=bool(st.session_state["adv_no_cliches"])
-        )
-    with c6:
-        st.session_state["adv_reading_level"] = st.selectbox(
-            "Reading level",
-            ["simple", "general", "advanced"],
-            index=(
-                ["simple", "general", "advanced"].index(
-                    st.session_state["adv_reading_level"]
-                )
-                if st.session_state["adv_reading_level"]
-                in ["simple", "general", "advanced"]
-                else 1
-            ),
-        )
+        ending_counts = {
+            "soft": int(row["ending_soft_count"]),
+            "twist": int(row["ending_twist_count"]),
+            "punchline": int(row["ending_punchline_count"]),
+            "hopeful": int(row["ending_hopeful_count"]),
+        }
+        ending_guess = max(ending_counts, key=ending_counts.get) if total > 0 else None
 
-    st.session_state["adv_audience"] = st.text_input(
-        "Audience (optional) — who this is for / who will read it",
-        value=st.session_state["adv_audience"],
-        help="Helps the model choose references and vibe. Example: 'my friend group', 'my girlfriend', 'my boss'.",
-    )
+        return {
+            "total_ratings": total,
+            "prefer_rhyme_score": float(row["prefer_rhyme_score"]),
+            "avg_line_count": float(row["avg_line_count"]),
+            "reading_level_guess": reading_guess,
+            "ending_guess": ending_guess,
+            "reading_counts": reading_counts,
+            "ending_counts": ending_counts,
+        }
 
-    st.divider()
-    st.markdown("### Model")
-    st.session_state["adv_model"] = st.selectbox(
-        "Model",
-        ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
-        index=(
-            ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"].index(
-                st.session_state["adv_model"]
-            )
-            if st.session_state["adv_model"]
-            in ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"]
-            else 0
-        ),
-    )
-    st.session_state["adv_temperature"] = st.slider(
-        "Temperature", 0.0, 1.5, float(st.session_state["adv_temperature"]), 0.1
-    )
-    st.session_state["adv_top_p"] = st.slider(
-        "Top-p", 0.1, 1.0, float(st.session_state["adv_top_p"]), 0.05
-    )
 
-    st.divider()
-    st.markdown("### Extra constraints")
-    st.session_state["adv_must_include"] = st.text_input(
-        "Must include (comma-separated)", value=st.session_state["adv_must_include"]
-    )
-    st.session_state["adv_avoid"] = st.text_input(
-        "Avoid (comma-separated)", value=st.session_state["adv_avoid"]
-    )
-    st.session_state["adv_syllable_hints"] = st.text_input(
-        "Syllable hints (optional)", value=st.session_state["adv_syllable_hints"]
-    )
-    st.session_state["adv_tone"] = st.selectbox(
-        "Tone",
-        [
-            "warm",
-            "funny",
-            "romantic",
-            "somber",
-            "hopeful",
-            "angry",
-            "motivational",
-            "surreal",
-            "minimalist",
-        ],
-        index=(
-            [
-                "warm",
-                "funny",
-                "romantic",
-                "somber",
-                "hopeful",
-                "angry",
-                "motivational",
-                "surreal",
-                "minimalist",
-            ].index(st.session_state["adv_tone"])
-            if st.session_state["adv_tone"]
-            in [
-                "warm",
-                "funny",
-                "romantic",
-                "somber",
-                "hopeful",
-                "angry",
-                "motivational",
-                "surreal",
-                "minimalist",
-            ]
-            else 0
-        ),
-    )
-    st.session_state["adv_show_debug"] = st.checkbox(
-        "Show internal debug", value=bool(st.session_state["adv_show_debug"])
-    )
+# --------- Postgres implementation (Supabase) ---------
 
-    st.divider()
-    st.markdown("### Data")
-    show_taste = st.checkbox("See my taste profile", value=False)
-    if show_taste:
-        taste = storage.get_taste_profile(USER_ID)
-        st.json(taste)
 
-    st.markdown("### Recent ratings (last 10)")
-    try:
-        recent = storage.list_ratings(USER_ID, limit=10)
-        if not recent:
-            st.info("No ratings yet.")
-        else:
-            st.dataframe(recent, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Could not load ratings yet: {e}")
+@dataclass
+class PostgresStorage(Storage):
+    database_url: str
 
-# LLM creation (always has defaults in session_state)
-llm = create_llm(
-    cfg,
-    model=st.session_state["adv_model"],
-    temperature=float(st.session_state["adv_temperature"]),
-    top_p=float(st.session_state["adv_top_p"]),
-)
+    def backend_name(self) -> str:
+        return "postgres:DATABASE_URL"
 
-# ================= PEOPLE =================
-with main_tabs[1]:
-    st.subheader("People")
-
-    with st.form("add_person_form", clear_on_submit=True):
-        name = st.text_input("Name")
-        relationship = st.text_input("Relationship (friend/partner/boss/etc.)")
-        note = st.text_area(
-            "Note (optional) — e.g., likes cats, hates cheesy lines", height=80
-        )
-        submitted = st.form_submit_button("Save person")
-
-    if submitted:
+    def _connect(self):
         try:
-            storage.add_person(USER_ID, name=name, relationship=relationship, note=note)
-            st.success("Saved.")
+            import psycopg
         except Exception as e:
-            st.error(str(e))
+            raise RuntimeError(
+                "DATABASE_URL is set but psycopg is not installed. Add psycopg[binary] to requirements.txt."
+            ) from e
+        return psycopg.connect(self.database_url)
 
-    st.divider()
-    st.markdown("### Saved people")
-    people = storage.list_people(USER_ID)
-    if not people:
-        st.info("No people saved yet.")
-    else:
-        for p in people:
-            icon = person_icon(p.get("relationship") or "")
-            st.markdown(f"{icon} **{p['name']}** — *{p['relationship']}*")
-            if p.get("note"):
-                st.caption(p["note"])
+    def init(self) -> None:
+        logger = setup_logger()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                CREATE TABLE IF NOT EXISTS people (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    relationship TEXT NOT NULL,
+                    note TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+                )
+                cur.execute(
+                    """
+                CREATE TABLE IF NOT EXISTS ratings (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    poem_name TEXT NOT NULL,
+                    version_label TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    poem_text TEXT NOT NULL,
+                    rating INTEGER NOT NULL,
+                    ending_pref TEXT,
+                    feedback TEXT
+                );
+                """
+                )
+                cur.execute(
+                    """
+                CREATE TABLE IF NOT EXISTS taste_profile (
+                    user_id TEXT PRIMARY KEY,
+                    total_ratings INTEGER NOT NULL DEFAULT 0,
 
-# ================= WRITE =================
-with main_tabs[0]:
-    st.subheader("Write")
+                    prefer_rhyme_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                    avg_line_count DOUBLE PRECISION NOT NULL DEFAULT 0.0,
 
-    user_memory = build_user_memory(
-        storage,
-        USER_ID,
-        include_prefs=bool(st.session_state["adv_apply_prefs"]),
-        include_people=bool(st.session_state["adv_use_people"]),
-    )
+                    reading_simple_count INTEGER NOT NULL DEFAULT 0,
+                    reading_general_count INTEGER NOT NULL DEFAULT 0,
+                    reading_advanced_count INTEGER NOT NULL DEFAULT 0,
 
-    if bool(st.session_state["adv_show_injected_memory"]):
-        st.code(user_memory)
+                    ending_soft_count INTEGER NOT NULL DEFAULT 0,
+                    ending_twist_count INTEGER NOT NULL DEFAULT 0,
+                    ending_punchline_count INTEGER NOT NULL DEFAULT 0,
+                    ending_hopeful_count INTEGER NOT NULL DEFAULT 0,
 
-    poem_name = st.text_input(
-        "Poem Name",
-        value=(st.session_state["poem_name"] or "Untitled"),
-        help="Used for downloads and grouping versions.",
-    )
-    st.session_state["poem_name"] = poem_name
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+                )
+            conn.commit()
+        logger.info(f"Storage initialized ({self.backend_name()})")
 
-    theme_bg = st.text_area(
-        "Theme / Background",
-        height=120,
-        value="Write a sincere poem with specific details.",
-    )
+    def add_person(
+        self, user_id: str, name: str, relationship: str, note: str | None
+    ) -> None:
+        name = name.strip()
+        relationship = relationship.strip()
+        if not name:
+            raise ValueError("Person name is required.")
+        if not relationship:
+            raise ValueError("Relationship is required.")
 
-    writer_style_choice = st.selectbox(
-        "Writer Style", list(WRITER_STYLES.keys()), index=0
-    )
-    writer_vibe = WRITER_STYLES.get(writer_style_choice)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO people(user_id, name, relationship, note) VALUES(%s,%s,%s,%s)",
+                    (user_id, name, relationship, note.strip() if note else None),
+                )
+            conn.commit()
 
-    occasion = st.selectbox(
-        "Occasion (inspiration)",
-        [
-            "for inspiration",
-            "apology",
-            "birthday",
-            "anniversary",
-            "wedding",
-            "graduation",
-            "goodbye",
-            "valentine",
-        ],
-        index=0,
-    )
-    style = st.selectbox(
-        "Format",
-        [
-            "free_verse",
-            "haiku",
-            "limerick",
-            "acrostic",
-            "sonnet_like",
-            "spoken_word",
-            "rhymed_couplets",
-        ],
-        index=0,
-    )
-    line_count = st.slider("Length (lines)", 2, 60, 12)
+    def list_people(self, user_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, name, relationship, note, created_at FROM people WHERE user_id=%s ORDER BY id DESC",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, r)) for r in rows]
 
-    acrostic_word = None
-    if style == "acrostic":
-        acrostic_word = st.text_input("Acrostic word", value="WINTER")
+    def add_rating(
+        self,
+        user_id: str,
+        poem_name: str,
+        version_label: str,
+        request: Dict[str, Any],
+        poem_text: str,
+        rating: int,
+        ending_pref: Optional[str],
+        feedback: Optional[str],
+    ) -> int:
+        rating = int(rating)
+        if rating < 1 or rating > 5:
+            raise ValueError("Rating must be 1..5")
 
-    must_list = [
-        w.strip() for w in st.session_state["adv_must_include"].split(",") if w.strip()
-    ]
-    avoid_list = [
-        w.strip() for w in st.session_state["adv_avoid"].split(",") if w.strip()
-    ]
-    syllable_val = (st.session_state["adv_syllable_hints"] or "").strip() or None
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ratings(user_id, poem_name, version_label, request_json, poem_text, rating, ending_pref, feedback)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                    RETURNING id
+                    """,
+                    (
+                        user_id,
+                        poem_name.strip() or "Untitled",
+                        version_label,
+                        json.dumps(request, ensure_ascii=False),
+                        poem_text,
+                        rating,
+                        ending_pref,
+                        feedback.strip() if feedback else None,
+                    ),
+                )
+                new_id = cur.fetchone()[0]
+            conn.commit()
+        return int(new_id)
 
-    req = PoemRequest(
-        occasion=occasion,
-        theme=theme_bg.strip() or "a meaningful moment",
-        audience=(st.session_state["adv_audience"].strip() or None),
-        style=style,
-        tone=st.session_state["adv_tone"],
-        writer_vibe=writer_vibe,
-        must_include=must_list,
-        avoid=avoid_list,
-        line_count=int(line_count),
-        rhyme=bool(st.session_state["adv_rhyme"]),
-        syllable_hints=syllable_val,
-        no_cliches=bool(st.session_state["adv_no_cliches"]),
-        reading_level=st.session_state["adv_reading_level"],
-        acrostic_word=(acrostic_word.strip() if acrostic_word else None),
-    )
+    def list_ratings(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        limit = int(limit)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT created_at, poem_name, version_label, rating, ending_pref, feedback
+                    FROM ratings
+                    WHERE user_id=%s
+                    ORDER BY id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, r)) for r in rows]
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    with c1:
-        btn_fast = st.button("Generate only (fast)")
-    with c2:
-        btn_full = st.button("Generate + Improve", type="primary")
-    with c3:
-        btn_again = st.button(
-            "Improve again", disabled=len(st.session_state["versions"]) == 0
+    def get_version_averages(
+        self, user_id: str, poem_name: str
+    ) -> Dict[str, Dict[str, Any]]:
+        poem_name = poem_name.strip() or "Untitled"
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT version_label, AVG(rating) AS avg_rating, COUNT(*) AS cnt
+                    FROM ratings
+                    WHERE user_id=%s AND poem_name=%s
+                    GROUP BY version_label
+                    """,
+                    (user_id, poem_name),
+                )
+                rows = cur.fetchall()
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for version_label, avg_rating, cnt in rows:
+            out[str(version_label)] = {
+                "avg": float(avg_rating) if avg_rating is not None else None,
+                "count": int(cnt),
+            }
+        return out
+
+    def update_taste_profile(
+        self,
+        user_id: str,
+        request: Dict[str, Any],
+        rating: int,
+        ending_pref: Optional[str],
+    ) -> None:
+        rhyme = bool(request.get("rhyme", False))
+        line_count = int(request.get("line_count", 12))
+        reading_level = (request.get("reading_level") or "general").lower()
+
+        strength = rating - 3
+        rhyme_delta = float(strength if rhyme else -strength)
+        ending = (ending_pref or "").lower().strip()
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO taste_profile(user_id, total_ratings) VALUES(%s,0) ON CONFLICT (user_id) DO NOTHING",
+                    (user_id,),
+                )
+                cur.execute(
+                    """
+                    SELECT total_ratings, prefer_rhyme_score, avg_line_count,
+                           reading_simple_count, reading_general_count, reading_advanced_count,
+                           ending_soft_count, ending_twist_count, ending_punchline_count, ending_hopeful_count
+                    FROM taste_profile WHERE user_id=%s
+                    """,
+                    (user_id,),
+                )
+                row = cur.fetchone()
+                (
+                    total,
+                    prefer_rhyme_score,
+                    avg_line_count,
+                    rs,
+                    rg,
+                    ra,
+                    es,
+                    et,
+                    ep,
+                    eh,
+                ) = row
+
+                total = int(total)
+                new_total = total + 1
+                new_avg = (float(avg_line_count) * total + line_count) / new_total
+                new_rhyme_score = float(prefer_rhyme_score) + rhyme_delta
+
+                if reading_level == "simple":
+                    rs += 1
+                elif reading_level == "advanced":
+                    ra += 1
+                else:
+                    rg += 1
+
+                if ending == "soft":
+                    es += 1
+                elif ending == "twist":
+                    et += 1
+                elif ending == "punchline":
+                    ep += 1
+                elif ending == "hopeful":
+                    eh += 1
+
+                cur.execute(
+                    """
+                    UPDATE taste_profile SET
+                        total_ratings=%s,
+                        prefer_rhyme_score=%s,
+                        avg_line_count=%s,
+                        reading_simple_count=%s,
+                        reading_general_count=%s,
+                        reading_advanced_count=%s,
+                        ending_soft_count=%s,
+                        ending_twist_count=%s,
+                        ending_punchline_count=%s,
+                        ending_hopeful_count=%s,
+                        updated_at=now()
+                    WHERE user_id=%s
+                    """,
+                    (
+                        new_total,
+                        new_rhyme_score,
+                        new_avg,
+                        rs,
+                        rg,
+                        ra,
+                        es,
+                        et,
+                        ep,
+                        eh,
+                        user_id,
+                    ),
+                )
+            conn.commit()
+
+    def get_taste_profile(self, user_id: str) -> Dict[str, Any]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM taste_profile WHERE user_id=%s", (user_id,))
+                row = cur.fetchone()
+                if not row:
+                    return {
+                        "total_ratings": 0,
+                        "prefer_rhyme_score": 0.0,
+                        "avg_line_count": None,
+                        "reading_level_guess": None,
+                        "ending_guess": None,
+                    }
+                cols = [desc[0] for desc in cur.description]
+                data = dict(zip(cols, row))
+
+        total = int(data["total_ratings"])
+        reading_counts = {
+            "simple": int(data["reading_simple_count"]),
+            "general": int(data["reading_general_count"]),
+            "advanced": int(data["reading_advanced_count"]),
+        }
+        reading_guess = (
+            max(reading_counts, key=reading_counts.get) if total > 0 else None
         )
-    with c4:
-        btn_clear = st.button("Clear versions")
 
-    if btn_clear:
-        st.session_state["versions"] = []
-        st.session_state["rated_versions"] = set()
-        st.session_state["last_request"] = None
-        st.session_state["last_poem"] = None
-        st.session_state["last_critique"] = None
-        st.session_state["last_revised"] = None
-        st.rerun()
+        ending_counts = {
+            "soft": int(data["ending_soft_count"]),
+            "twist": int(data["ending_twist_count"]),
+            "punchline": int(data["ending_punchline_count"]),
+            "hopeful": int(data["ending_hopeful_count"]),
+        }
+        ending_guess = max(ending_counts, key=ending_counts.get) if total > 0 else None
 
-    # ---- Button actions: update state then rerun ----
-    if btn_fast:
-        out = generate_only(llm, req, user_memory=user_memory)
-        if not out.ok:
-            st.error(out.error_user)
-        else:
-            st.session_state["last_request"] = req
-            st.session_state["last_poem"] = out.poem
-            st.session_state["last_critique"] = None
-            st.session_state["last_revised"] = None
-            st.session_state["versions"] = [{"label": "Version 1", "text": out.poem}]
-            st.rerun()
-
-    if btn_full:
-        out = generate_and_improve(llm, req, user_memory=user_memory)
-        if not out.ok:
-            st.error(out.error_user)
-        else:
-            st.session_state["last_request"] = req
-            st.session_state["last_poem"] = out.poem
-            st.session_state["last_critique"] = out.critique
-            st.session_state["last_revised"] = out.revised_poem
-            st.session_state["versions"] = [
-                {"label": "Version 1", "text": out.poem},
-                {"label": "Version 2 (Upgraded)", "text": out.revised_poem},
-            ]
-            st.rerun()
-
-    if btn_again:
-        last_req = st.session_state["last_request"]
-        base_poem = st.session_state["versions"][-1]["text"]
-
-        out = improve_again(llm, last_req, base_poem, user_memory=user_memory)
-        if not out.ok:
-            st.error(out.error_user)
-        else:
-            new_text = (out.revised_poem or "").strip()
-            prev_text = (base_poem or "").strip()
-
-            if new_text == prev_text:
-                st.error(
-                    "Improve again produced the same poem. Try again (or adjust constraints)."
-                )
-            else:
-                st.session_state["last_critique"] = out.critique
-                st.session_state["last_revised"] = out.revised_poem
-
-                next_num = len(st.session_state["versions"]) + 1
-                label = f"Version {next_num} (Upgraded)"
-                st.session_state["versions"].append(
-                    {"label": label, "text": out.revised_poem}
-                )
-                st.rerun()
-
-    st.divider()
-    st.subheader("Output")
-
-    def render_versions():
-        if not st.session_state["versions"]:
-            st.info("No versions yet. Click Generate.")
-            return
-
-        safe_title = (poem_name.strip() or "Untitled").replace("/", "-")
-        for i, v in enumerate(st.session_state["versions"], start=1):
-            label = v["label"]
-            text = v["text"]
-            st.markdown(f"### {label}")
-            st.code(text)
-            st.download_button(
-                f"Download {label} (.txt)",
-                text,
-                file_name=f"{safe_title} - {label}.txt",
-                key=f"dl_{i}",
-            )
-
-    def rating_form(version_label: str, poem_text: str):
-        if version_label in st.session_state["rated_versions"]:
-            return
-
-        st.divider()
-        st.subheader(f"Rate {version_label}")
-
-        form_key = (
-            f"rate_{version_label}".replace(" ", "_").replace("(", "").replace(")", "")
-        )
-        rating_key = f"rating_{form_key}"
-        feedback_key = f"feedback_{form_key}"
-        ending_key = f"ending_{form_key}"
-
-        with st.form(key=form_key, clear_on_submit=False):
-            st.radio(
-                "Rating",
-                STAR_OPTIONS,
-                index=3,
-                format_func=stars_label,
-                horizontal=True,
-                key=rating_key,
-            )
-            st.selectbox(
-                "Ending preference (optional)",
-                ["", "soft", "twist", "punchline", "hopeful"],
-                index=0,
-                key=ending_key,
-            )
-            st.text_area("Optional feedback", key=feedback_key)
-            submitted = st.form_submit_button("Submit rating")
-
-        if submitted:
-            try:
-                storage.add_rating(
-                    user_id=USER_ID,
-                    poem_name=poem_name,
-                    version_label=version_label,
-                    request=req.model_dump(),
-                    poem_text=poem_text,
-                    rating=int(st.session_state[rating_key]),
-                    ending_pref=(st.session_state[ending_key] or None),
-                    feedback=(st.session_state[feedback_key] or None),
-                )
-                storage.update_taste_profile(
-                    user_id=USER_ID,
-                    request=req.model_dump(),
-                    rating=int(st.session_state[rating_key]),
-                    ending_pref=(st.session_state[ending_key] or None),
-                )
-
-                st.session_state["rated_versions"].add(version_label)
-                st.success(
-                    f"Saved rating: {stars_label(int(st.session_state[rating_key]))}"
-                )
-                st.rerun()
-            except Exception as e:
-                st.error(str(e))
-
-    render_versions()
-
-    for v in st.session_state["versions"]:
-        rating_form(v["label"], v["text"])
-
-    if bool(st.session_state["adv_show_debug"]) and st.session_state.get(
-        "last_critique"
-    ):
-        st.markdown("#### Debug: critique (hidden by default)")
-        st.json(st.session_state["last_critique"])
+        return {
+            "total_ratings": total,
+            "prefer_rhyme_score": float(data["prefer_rhyme_score"]),
+            "avg_line_count": float(data["avg_line_count"]),
+            "reading_level_guess": reading_guess,
+            "ending_guess": ending_guess,
+            "reading_counts": reading_counts,
+            "ending_counts": ending_counts,
+        }
