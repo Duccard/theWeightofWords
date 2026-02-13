@@ -28,78 +28,69 @@ BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
 bg_base64 = load_bg_image_base64(BG_PATH)
 
 st.markdown(
-    f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+    """
+<style>
+/* ---- Make ALL labels/text white (checkbox/toggle labels included) ---- */
+.stApp, .stMarkdown, .stText, .stCaption, label,
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] span {
+  color: #ffffff !important;
+}
 
-    .stApp {{
-        background-image: url("data:image/jpeg;base64,{bg_base64}");
-        background-size: cover;
-        background-position: center;
-        background-attachment: fixed;
-    }}
+/* Toggle / checkbox label text (Apply my preferences etc.) */
+div[data-testid="stToggle"] label,
+div[data-testid="stCheckbox"] label {
+  color: #ffffff !important;
+}
 
-    /* GLOBAL TEXT */
-    html, body, .stApp, label, .stMarkdown, .stText,
-    .stCaption, .stSubheader, .stHeader {{
-        color: #ffffff !important;
-    }}
+/* ---- Default button style (non-primary) ---- */
+.stButton > button,
+.stDownloadButton > button {
+  background-color: rgba(255,255,255,0.18) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.35) !important;
+  border-radius: 10px !important;
+}
 
-    /* TABS */
-    button[data-baseweb="tab"] {{
-        color: #ffffff !important;
-        font-weight: 600;
-    }}
+/* ---- ORANGE buttons by aria-label (exact text match) ---- */
+/* Generate + Improve */
+.stButton > button[aria-label="Generate + Improve"] {
+  background-color: #ff8a00 !important;
+  color: #ffffff !important;
+  border: 1px solid #ff8a00 !important;
+}
 
-    /* TITLE */
-    .wow-title {{
-        font-family: 'Great Vibes', cursive;
-        font-size: 72px;
-        text-align: center;
-        color: #ffffff;
-        margin-bottom: 0.2rem;
-    }}
+/* Save person (form submit button) */
+.stButton > button[aria-label="Save person"] {
+  background-color: #ff8a00 !important;
+  color: #ffffff !important;
+  border: 1px solid #ff8a00 !important;
+}
 
-    .wow-subtitle {{
-        text-align: center;
-        font-size: 1.1rem;
-        opacity: 0.9;
-        color: #ffffff;
-        margin-bottom: 2rem;
-    }}
+/* Submit rating (form submit button) */
+.stButton > button[aria-label="Submit rating"] {
+  background-color: #ff8a00 !important;
+  color: #ffffff !important;
+  border: 1px solid #ff8a00 !important;
+}
 
-    /* INPUTS */
-    .stTextInput input,
-    .stTextArea textarea,
-    .stSelectbox div[role="combobox"] {{
-        background: rgba(255,255,255,0.95) !important;
-        color: #000000 !important;
-        border-radius: 10px;
-    }}
+/* Download buttons (your label varies per version, so use "starts with Download") */
+.stDownloadButton > button[aria-label^="Download"] {
+  background-color: #ff8a00 !important;
+  color: #ffffff !important;
+  border: 1px solid #ff8a00 !important;
+}
 
-    /* POEM OUTPUT */
-    pre, code {{
-        background: rgba(0,0,0,0.35) !important;
-        color: #ffffff !important;
-        border-radius: 12px;
-    }}
+/* ---- Info boxes like "No people saved yet." ---- */
+div[data-testid="stAlert"] {
+  color: #ffffff !important;
+}
 
-    /* BUTTONS */
-    .stButton > button {{
-        background-color: rgba(255,255,255,0.18) !important;
-        color: #ffffff !important;
-        border-radius: 10px;
-    }}
-
-    .stButton > button[data-testid="baseButton-primary"] {{
-        background-color: #ff4b4b !important;
-        color: #ffffff !important;
-    }}
-    </style>
-
-    <div class="wow-title">The Weight of Words</div>
-    <div class="wow-subtitle">Beautiful poem generator</div>
-    """,
+div[data-testid="stAlert"] * {
+  color: #ffffff !important;
+}
+</style>
+""",
     unsafe_allow_html=True,
 )
 
