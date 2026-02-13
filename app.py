@@ -17,71 +17,106 @@ load_dotenv()
 logger = setup_logger()
 
 
+from pathlib import Path
+import base64
+
+
 def load_bg_image_base64(path: Path) -> str:
     if not path.exists():
         return ""
     return base64.b64encode(path.read_bytes()).decode()
 
 
-st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
 BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
 bg_base64 = load_bg_image_base64(BG_PATH)
 
 st.markdown(
     f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
 
-    /* BACKGROUND */
-    .stApp {{
-        background-image: url("data:image/jpeg;base64,{bg_base64}");
-        background-size: cover;
-        background-position: center;
-        background-attachment: fixed;
-    }}
+<style>
+/* ================= BACKGROUND ================= */
+.stApp {{
+    background-image: url("data:image/jpeg;base64,{bg_base64}");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}}
 
-    /* ALL PLAIN TEXT = WHITE */
-    html, body, .stApp,
-    label,
-    .stMarkdown,
-    .stText,
-    .stCaption,
-    .stSubheader,
-    .stHeader,
-    .stInfo,
-    .stWarning,
-    .stSuccess {{
-        color: #ffffff !important;
-    }}
+/* ================= GLOBAL TEXT ================= */
+html, body, .stApp,
+label, .stMarkdown, .stText,
+.stCaption, .stSubheader, .stHeader,
+p, span {{
+    color: #ffffff !important;
+}}
 
-    /* TABS TEXT */
-    button[data-baseweb="tab"] {{
-        color: #ffffff !important;
-        font-weight: 600;
-    }}
+/* ================= TABS ================= */
+button[data-baseweb="tab"] {{
+    color: #ffffff !important;
+    font-weight: 600;
+}}
 
-    /* TITLE */
-    .wow-title {{
-        font-family: 'Great Vibes', cursive;
-        font-size: 72px;
-        text-align: center;
-        color: #ffffff;
-        margin-bottom: 0.2rem;
-    }}
+/* ================= TITLE ================= */
+.wow-title {{
+    font-family: 'Great Vibes', cursive;
+    font-size: 72px;
+    text-align: center;
+    color: #ffffff;
+    margin-bottom: 0.2rem;
+}}
 
-    .wow-subtitle {{
-        text-align: center;
-        font-size: 1.1rem;
-        opacity: 0.9;
-        color: #ffffff;
-        margin-bottom: 2rem;
-    }}
+.wow-subtitle {{
+    text-align: center;
+    font-size: 1.1rem;
+    opacity: 0.9;
+    color: #ffffff;
+    margin-bottom: 2rem;
+}}
 
-    </style>
+/* ================= INPUT FIELDS ================= */
+.stTextInput input,
+.stTextArea textarea,
+.stSelectbox div[role="combobox"] {{
+    background: rgba(255,255,255,0.95) !important;
+    color: #000000 !important;
+    border-radius: 10px;
+}}
 
-    <div class="wow-title">The Weight of Words</div>
-    <div class="wow-subtitle">Beautiful poem generator</div>
-    """,
+/* ================= POEM OUTPUT ================= */
+pre, code {{
+    background: rgba(0,0,0,0.35) !important;
+    color: #ffffff !important;
+    border-radius: 12px;
+}}
+
+/* ================= GHOST BUTTONS (OPT-IN) ================= */
+.wow-ghost .stButton > button,
+.wow-ghost button[kind="secondary"],
+.wow-ghost form button {{
+    background-color: transparent !important;
+    color: #ffffff !important;
+    border: 1.5px solid rgba(255,255,255,0.65) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}}
+
+.wow-ghost .stButton > button:hover,
+.wow-ghost button[kind="secondary"]:hover,
+.wow-ghost form button:hover {{
+    background-color: transparent !important;
+    color: #ffffff !important;
+    border-color: rgba(255,255,255,0.65) !important;
+    filter: none !important;
+    transform: none !important;
+}}
+</style>
+
+<div class="wow-title">The Weight of Words</div>
+<div class="wow-subtitle">Beautiful poem generator</div>
+""",
     unsafe_allow_html=True,
 )
 
