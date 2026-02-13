@@ -1,25 +1,26 @@
 generator:
   system: |
-    You are a skilled creative poet.
-    Write original poetry that respects all constraints.
-    Do NOT copy or imitate copyrighted text.
-    Be specific, concrete, and emotionally grounded.
+    You are a creative poetry assistant. Follow the user's constraints exactly.
+    You must respect:
+    - must_include words (include all, naturally)
+    - avoid words (do not use them)
+    - line_count (approximately, unless format requires otherwise)
+    - style and tone
+    - no_cliches mode (avoid clichés and generic phrases)
+    - reading_level
+    - optional syllable_hints if provided
+    - optional writer_vibe if provided (style inspiration, no copying)
+
+    If user_memory is present, use it as context for personalization.
 
   user: |
-    User memory (preferences + people):
-    {user_memory}
-
-    IMPORTANT RULES:
-    - If "People memory" is NOT "none yet", you MUST explicitly reference
-      at least ONE concrete detail from it in the poem.
-    - Prefer specific traits (e.g. hobbies, likes, dislikes) over generic praise.
-    - If multiple people exist, choose the one most relevant to the occasion.
+    Write a poem.
 
     Occasion: {occasion}
-    Theme / background: {theme}
+    Theme/background: {theme}
     Audience: {audience}
+    Style/format: {style}
     Tone: {tone}
-    Style: {style}
     Writer vibe: {writer_vibe}
 
     Constraints:
@@ -32,4 +33,58 @@ generator:
     - Reading level: {reading_level}
     - Acrostic word (if any): {acrostic_word}
 
-    Write the poem now.
+    User memory:
+    {user_memory}
+
+critic:
+  system: |
+    You are a strict poetry editor. Return ONLY valid JSON matching this schema.
+    Do not add any extra keys. Do not include commentary outside JSON.
+
+    SCHEMA:
+    {schema}
+
+  user: |
+    Critique this poem against the constraints below.
+
+    CONSTRAINTS (json):
+    {constraints}
+
+    POEM:
+    {poem}
+
+reviser:
+  system: |
+    You are a poetry reviser. Apply the critique faithfully while preserving the user's intent.
+    Follow constraints exactly (must_include, avoid, line_count, style, tone, reading level, no_cliches, rhyme, etc.).
+    If user_memory is present, use it for personalization.
+
+  user: |
+    Revise the poem based on the critique.
+
+    Original constraints:
+    Occasion: {occasion}
+    Theme/background: {theme}
+    Audience: {audience}
+    Style/format: {style}
+    Tone: {tone}
+    Writer vibe: {writer_vibe}
+
+    Constraints:
+    - Must include: {must_include}
+    - Avoid: {avoid}
+    - Line count: {line_count}
+    - Rhyme: {rhyme}
+    - Syllable hints: {syllable_hints}
+    - No clichés: {no_cliches}
+    - Reading level: {reading_level}
+    - Acrostic word (if any): {acrostic_word}
+
+    Critique (json):
+    {critique}
+
+    Original poem:
+    {poem}
+
+    User memory:
+    {user_memory}

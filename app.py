@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 import streamlit as st
 from dotenv import load_dotenv
@@ -12,24 +14,9 @@ from core.storage import get_storage
 load_dotenv()
 logger = setup_logger()
 
-# ---------- Page ----------
 st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
-
-# Title (no emoji) + cursive-ish look
-st.markdown(
-    """
-<style>
-h1 {
-  font-family: "Brush Script MT", "Snell Roundhand", "Apple Chancery", cursive !important;
-  font-weight: 500 !important;
-  letter-spacing: 0.5px;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
 st.title("The Weight of Words")
-st.caption("Poem generator with memory + upgrades (Generator → Critic → Reviser).")
+st.caption("Beautiful poem generator")
 
 # ---- Config validation ----
 try:
@@ -46,12 +33,12 @@ except Exception as e:
     st.error(f"Storage init failed: {e}")
     st.stop()
 
-# Simple user id per browser session
+# stable per browser session (until auth)
 if "user_id" not in st.session_state:
     st.session_state["user_id"] = "user_" + str(uuid.uuid4())[:8]
 USER_ID = st.session_state["user_id"]
 
-# ---- Writer style presets ----
+# ---- Writer style presets (removed custom option) ----
 WRITER_STYLES = {
     "Default": None,
     "William Shakespeare": "elevated lyrical drama, balanced cadence, rich metaphor (no imitation or copying)",
@@ -65,7 +52,6 @@ WRITER_STYLES = {
     "Seamus Heaney": "earthy tactile imagery, reflective lyricism (no imitation or copying)",
     "Matsuo Bashō": "minimalist stillness, nature clarity (no imitation or copying)",
     "Alexander Pushkin": "lyrical clarity, narrative elegance (no imitation or copying)",
-    "Custom (type your own)": "CUSTOM",
 }
 
 # ---- Session state ----
@@ -86,27 +72,28 @@ if st.session_state["versions"] is None:
 if st.session_state["rated_versions"] is None:
     st.session_state["rated_versions"] = set()
 
-# Advanced settings defaults (so create_llm ALWAYS has values)
+# Advanced defaults
 st.session_state.setdefault("adv_model", "gpt-4o-mini")
 st.session_state.setdefault("adv_temperature", 0.9)
 st.session_state.setdefault("adv_top_p", 0.95)
 
-st.session_state.setdefault("adv_must_include", "")
-st.session_state.setdefault("adv_avoid", "")
-st.session_state.setdefault("adv_rhyme", False)
-st.session_state.setdefault("adv_syllable_hints", "")
-st.session_state.setdefault("adv_no_cliches", True)
-st.session_state.setdefault("adv_reading_level", "general")
-st.session_state.setdefault("adv_tone", "warm")
-st.session_state.setdefault("adv_show_debug", False)
-
-# ✅ moved from Write → Advanced
 st.session_state.setdefault("adv_audience", "")
 
-# ✅ moved toggles to Advanced (as you requested earlier)
+# Move these to advanced top
 st.session_state.setdefault("adv_apply_prefs", True)
 st.session_state.setdefault("adv_use_people", True)
 st.session_state.setdefault("adv_show_injected_memory", False)
+
+st.session_state.setdefault("adv_rhyme", False)
+st.session_state.setdefault("adv_no_cliches", True)
+st.session_state.setdefault("adv_reading_level", "general")
+
+st.session_state.setdefault("adv_must_include", "")
+st.session_state.setdefault("adv_avoid", "")
+st.session_state.setdefault("adv_syllable_hints", "")
+
+st.session_state.setdefault("adv_tone", "warm")
+st.session_state.setdefault("adv_show_debug", False)
 
 STAR_OPTIONS = [1, 2, 3, 4, 5]
 
@@ -123,6 +110,7 @@ def build_user_memory(
     if include_prefs:
         taste = storage_obj.get_taste_profile(user_id) or {}
         total = int(taste.get("total_ratings", 0) or 0)
+
         if total <= 0:
             parts.append("Preferences learned from ratings: none yet.")
         else:
@@ -165,27 +153,78 @@ def build_user_memory(
     return "\n\n".join(parts).strip() or "None"
 
 
+def person_icon(relationship: str) -> str:
+    rel = (relationship or "").lower()
+    if "girlfriend" in rel or "boyfriend" in rel or "partner" in rel:
+        return "❤️"
+    if "friend" in rel:
+        return "🧑‍🤝‍🧑"
+    if "boss" in rel or "manager" in rel:
+        return "🧑‍💼"
+    if (
+        "mom" in rel
+        or "mother" in rel
+        or "dad" in rel
+        or "father" in rel
+        or "parent" in rel
+    ):
+        return "👪"
+    if "wife" in rel or "husband" in rel:
+        return "💍"
+    return "👤"
+
+
 main_tabs = st.tabs(["Write", "People", "Advanced"])
 
 # ================= ADVANCED =================
 with main_tabs[2]:
     st.subheader("Advanced settings")
-
     st.caption(f"Storage backend: **{storage.backend_name()}**")
-    taste = storage.get_taste_profile(USER_ID)
-    st.markdown("### Your taste profile (learned)")
-    st.json(taste)
 
-    st.divider()
-    st.markdown("### Recent ratings (last 10)")
-    try:
-        recent = storage.list_ratings(USER_ID, limit=10)
-        if not recent:
-            st.info("No ratings yet.")
-        else:
-            st.dataframe(recent, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Could not load ratings yet: {e}")
+    st.markdown("### Personalization & constraints")
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        st.session_state["adv_apply_prefs"] = st.toggle(
+            "Apply my preferences", value=bool(st.session_state["adv_apply_prefs"])
+        )
+    with c2:
+        st.session_state["adv_use_people"] = st.toggle(
+            "Use people memory", value=bool(st.session_state["adv_use_people"])
+        )
+    with c3:
+        st.session_state["adv_show_injected_memory"] = st.toggle(
+            "Show injected memory",
+            value=bool(st.session_state["adv_show_injected_memory"]),
+        )
+
+    c4, c5, c6 = st.columns([1, 1, 1])
+    with c4:
+        st.session_state["adv_rhyme"] = st.checkbox(
+            "Rhyme", value=bool(st.session_state["adv_rhyme"])
+        )
+    with c5:
+        st.session_state["adv_no_cliches"] = st.checkbox(
+            "No clichés mode", value=bool(st.session_state["adv_no_cliches"])
+        )
+    with c6:
+        st.session_state["adv_reading_level"] = st.selectbox(
+            "Reading level",
+            ["simple", "general", "advanced"],
+            index=(
+                ["simple", "general", "advanced"].index(
+                    st.session_state["adv_reading_level"]
+                )
+                if st.session_state["adv_reading_level"]
+                in ["simple", "general", "advanced"]
+                else 1
+            ),
+        )
+
+    st.session_state["adv_audience"] = st.text_input(
+        "Audience (optional) — who this is for / who will read it",
+        value=st.session_state["adv_audience"],
+        help="Helps the model choose references and vibe. Example: 'my friend group', 'my girlfriend', 'my boss'.",
+    )
 
     st.divider()
     st.markdown("### Model")
@@ -209,42 +248,15 @@ with main_tabs[2]:
     )
 
     st.divider()
-    st.markdown("### Constraints")
+    st.markdown("### Extra constraints")
     st.session_state["adv_must_include"] = st.text_input(
         "Must include (comma-separated)", value=st.session_state["adv_must_include"]
     )
     st.session_state["adv_avoid"] = st.text_input(
         "Avoid (comma-separated)", value=st.session_state["adv_avoid"]
     )
-    st.session_state["adv_rhyme"] = st.checkbox(
-        "Rhyme", value=bool(st.session_state["adv_rhyme"])
-    )
     st.session_state["adv_syllable_hints"] = st.text_input(
         "Syllable hints (optional)", value=st.session_state["adv_syllable_hints"]
-    )
-    st.session_state["adv_no_cliches"] = st.checkbox(
-        "No clichés mode", value=bool(st.session_state["adv_no_cliches"])
-    )
-    st.session_state["adv_reading_level"] = st.selectbox(
-        "Reading level",
-        ["simple", "general", "advanced"],
-        index=(
-            ["simple", "general", "advanced"].index(
-                st.session_state["adv_reading_level"]
-            )
-            if st.session_state["adv_reading_level"]
-            in ["simple", "general", "advanced"]
-            else 1
-        ),
-    )
-
-    st.divider()
-    st.markdown("### Optional extra context")
-    # ✅ audience moved here
-    st.session_state["adv_audience"] = st.text_input(
-        "Audience (optional) — who this is for / who will read it",
-        value=st.session_state["adv_audience"],
-        help="Example: 'my friend group', 'my boss', 'my girlfriend'. Helps the poem choose references and vibe.",
     )
     st.session_state["adv_tone"] = st.selectbox(
         "Tone",
@@ -291,22 +303,23 @@ with main_tabs[2]:
     )
 
     st.divider()
-    st.markdown("### Memory injection controls")
-    cA, cB = st.columns(2)
-    with cA:
-        st.session_state["adv_apply_prefs"] = st.toggle(
-            "Apply my preferences", value=bool(st.session_state["adv_apply_prefs"])
-        )
-    with cB:
-        st.session_state["adv_use_people"] = st.toggle(
-            "Use people memory", value=bool(st.session_state["adv_use_people"])
-        )
-    st.session_state["adv_show_injected_memory"] = st.checkbox(
-        "Show injected memory (debug)",
-        value=bool(st.session_state["adv_show_injected_memory"]),
-    )
+    st.markdown("### Data")
+    show_taste = st.checkbox("See my taste profile", value=False)
+    if show_taste:
+        taste = storage.get_taste_profile(USER_ID)
+        st.json(taste)
 
-# Create LLM AFTER advanced controls have defaults
+    st.markdown("### Recent ratings (last 10)")
+    try:
+        recent = storage.list_ratings(USER_ID, limit=10)
+        if not recent:
+            st.info("No ratings yet.")
+        else:
+            st.dataframe(recent, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Could not load ratings yet: {e}")
+
+# LLM creation (always has defaults in session_state)
 llm = create_llm(
     cfg,
     model=st.session_state["adv_model"],
@@ -316,7 +329,7 @@ llm = create_llm(
 
 # ================= PEOPLE =================
 with main_tabs[1]:
-    st.subheader("People (memory)")
+    st.subheader("People")
 
     with st.form("add_person_form", clear_on_submit=True):
         name = st.text_input("Name")
@@ -340,7 +353,8 @@ with main_tabs[1]:
         st.info("No people saved yet.")
     else:
         for p in people:
-            st.markdown(f"**{p['name']}** — *{p['relationship']}*")
+            icon = person_icon(p.get("relationship") or "")
+            st.markdown(f"{icon} **{p['name']}** — *{p['relationship']}*")
             if p.get("note"):
                 st.caption(p["note"])
 
@@ -374,11 +388,7 @@ with main_tabs[0]:
     writer_style_choice = st.selectbox(
         "Writer Style", list(WRITER_STYLES.keys()), index=0
     )
-    custom_writer_vibe = None
-    if WRITER_STYLES.get(writer_style_choice) == "CUSTOM":
-        custom_writer_vibe = st.text_input(
-            "Custom writer vibe", value="classical storyteller energy (no copying)"
-        )
+    writer_vibe = WRITER_STYLES.get(writer_style_choice)
 
     occasion = st.selectbox(
         "Occasion (inspiration)",
@@ -413,19 +423,11 @@ with main_tabs[0]:
     if style == "acrostic":
         acrostic_word = st.text_input("Acrostic word", value="WINTER")
 
-    writer_vibe = (
-        (custom_writer_vibe or "").strip() or None
-        if WRITER_STYLES.get(writer_style_choice) == "CUSTOM"
-        else WRITER_STYLES.get(writer_style_choice)
-    )
-
     must_list = [
-        w.strip()
-        for w in (st.session_state["adv_must_include"] or "").split(",")
-        if w.strip()
+        w.strip() for w in st.session_state["adv_must_include"].split(",") if w.strip()
     ]
     avoid_list = [
-        w.strip() for w in (st.session_state["adv_avoid"] or "").split(",") if w.strip()
+        w.strip() for w in st.session_state["adv_avoid"].split(",") if w.strip()
     ]
     syllable_val = (st.session_state["adv_syllable_hints"] or "").strip() or None
 
@@ -438,7 +440,7 @@ with main_tabs[0]:
         writer_vibe=writer_vibe,
         must_include=must_list,
         avoid=avoid_list,
-        line_count=line_count,
+        line_count=int(line_count),
         rhyme=bool(st.session_state["adv_rhyme"]),
         syllable_hints=syllable_val,
         no_cliches=bool(st.session_state["adv_no_cliches"]),
@@ -467,6 +469,7 @@ with main_tabs[0]:
         st.session_state["last_revised"] = None
         st.rerun()
 
+    # ---- Button actions: update state then rerun ----
     if btn_fast:
         out = generate_only(llm, req, user_memory=user_memory)
         if not out.ok:
@@ -497,12 +500,14 @@ with main_tabs[0]:
     if btn_again:
         last_req = st.session_state["last_request"]
         base_poem = st.session_state["versions"][-1]["text"]
+
         out = improve_again(llm, last_req, base_poem, user_memory=user_memory)
         if not out.ok:
             st.error(out.error_user)
         else:
             new_text = (out.revised_poem or "").strip()
             prev_text = (base_poem or "").strip()
+
             if new_text == prev_text:
                 st.error(
                     "Improve again produced the same poem. Try again (or adjust constraints)."
@@ -510,6 +515,7 @@ with main_tabs[0]:
             else:
                 st.session_state["last_critique"] = out.critique
                 st.session_state["last_revised"] = out.revised_poem
+
                 next_num = len(st.session_state["versions"]) + 1
                 label = f"Version {next_num} (Upgraded)"
                 st.session_state["versions"].append(
@@ -588,6 +594,7 @@ with main_tabs[0]:
                     rating=int(st.session_state[rating_key]),
                     ending_pref=(st.session_state[ending_key] or None),
                 )
+
                 st.session_state["rated_versions"].add(version_label)
                 st.success(
                     f"Saved rating: {stars_label(int(st.session_state[rating_key]))}"
