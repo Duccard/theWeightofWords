@@ -23,7 +23,7 @@ def load_bg_image_base64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode()
 
 
-st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
+st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="narrow")
 BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
 bg_base64 = load_bg_image_base64(BG_PATH)
 
