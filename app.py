@@ -23,7 +23,7 @@ def load_bg_image_base64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("utf-8")
 
 
-BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
+BG_PATH = Path.cwd() / "assets" / "background.jpg"
 bg_base64 = load_bg_image_base64(BG_PATH)
 
 st.markdown(
