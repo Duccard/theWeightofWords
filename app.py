@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import uuid
 import base64
+import uuid
 from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from core.config import load_config
-from core.logging_setup import setup_logger
-from core.llm_factory import create_llm
-from core.orchestrator import generate_only, generate_and_improve, improve_again
 from agent.schemas import PoemRequest
+from core.config import load_config
+from core.llm_factory import create_llm
+from core.logging_setup import setup_logger
+from core.orchestrator import generate_only, generate_and_improve, improve_again
 from core.storage import get_storage
 
 load_dotenv()
@@ -19,131 +19,175 @@ logger = setup_logger()
 
 st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
 
-# ------------------------------------------------------------
-# UI ONLY: Background + Fonts + White text
-# ------------------------------------------------------------
+
+# ================= THEME / BACKGROUND / FONTS =================
+def _b64_image(path: Path) -> str:
+    return base64.b64encode(path.read_bytes()).decode("utf-8")
 
 
-def _inject_background_image(bg_path: Path) -> None:
-    """Inject a full-page fixed background image (safe CSS injection)."""
-    try:
-        data = base64.b64encode(bg_path.read_bytes()).decode("utf-8")
-    except Exception as e:
-        st.warning(f"Could not read background image: {e}")
-        return
+def inject_theme(bg_path: Path) -> None:
+    bg_b64 = _b64_image(bg_path)
 
     st.markdown(
         f"""
-        <style>
-        .stApp {{
-            background-image: url("data:image/jpg;base64,{data}");
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-        }}
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
 
-        /* Soft dark overlay to keep white text readable */
-        .stApp::before {{
-            content: "";
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.38);
-            pointer-events: none;
-            z-index: 0;
-        }}
+/* ---- App background ---- */
+.stApp {{
+  background: url("data:image/jpeg;base64,{bg_b64}") center/cover no-repeat fixed;
+}}
 
-        /* Keep app content above overlay */
-        .stApp > div {{
-            position: relative;
-            z-index: 1;
-        }}
-        </style>
+/* Optional: subtle dark overlay so white text stays readable */
+.stApp::before {{
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  pointer-events: none;
+  z-index: 0;
+}}
+
+/* Keep Streamlit content above overlay */
+.stApp > header, .stApp > div {{
+  position: relative;
+  z-index: 1;
+}}
+
+/* ---- Title / Subtitle (Great Vibes) ---- */
+.wow-title {{
+  font-family: 'Great Vibes', cursive;
+  font-size: 76px;
+  font-weight: 400;
+  line-height: 1.0;
+  text-align: center;
+  color: #fff;
+  margin-top: 0.2rem;
+  margin-bottom: 0.35rem;
+  text-shadow: 0 2px 18px rgba(0,0,0,0.45);
+}}
+.wow-subtitle {{
+  text-align: center;
+  font-size: 1.05rem;
+  color: rgba(255,255,255,0.92);
+  margin-top: 0;
+  margin-bottom: 1.0rem;
+  text-shadow: 0 2px 14px rgba(0,0,0,0.40);
+}}
+
+/* ---- Tabs (Write / People / Advanced) white ---- */
+div[data-testid="stTabs"] button {{
+  color: rgba(255,255,255,0.92) !important;
+}}
+div[data-testid="stTabs"] button[aria-selected="true"] {{
+  color: #fff !important;
+}}
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"] {{
+  background-color: rgba(255,255,255,0.85) !important;
+}}
+
+/* ---- General headings/labels readable on background ---- */
+h1, h2, h3, h4, h5, h6, p, label, .stMarkdown, .stCaption {{
+  color: rgba(255,255,255,0.92);
+}}
+/* Streamlit small helper text */
+small, .st-emotion-cache-1v0mbdj, .st-emotion-cache-16idsys {{
+  color: rgba(255,255,255,0.85) !important;
+}}
+
+/* ---- Buttons: make them visible again ---- */
+.stButton > button {{
+  background: rgba(255,255,255,0.16) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255,255,255,0.35) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.18) !important;
+}}
+.stButton > button:hover {{
+  background: rgba(255,255,255,0.24) !important;
+  border-color: rgba(255,255,255,0.55) !important;
+}}
+.stButton > button:active {{
+  transform: translateY(1px);
+}}
+
+/* Primary button too */
+button[kind="primary"], .stButton > button[data-testid="baseButton-primary"] {{
+  background: rgba(255,255,255,0.22) !important;
+  border-color: rgba(255,255,255,0.55) !important;
+  color: #fff !important;
+}}
+
+/* ---- Inputs: slightly translucent so they don't disappear ---- */
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stSelectbox"] div[role="combobox"],
+div[data-testid="stSlider"] {{
+  background: rgba(255,255,255,0.10) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255,255,255,0.28) !important;
+}}
+/* Placeholder text */
+div[data-testid="stTextInput"] input::placeholder,
+div[data-testid="stTextArea"] textarea::placeholder {{
+  color: rgba(255,255,255,0.70) !important;
+}}
+
+/* ---- Poem window: transparent background + white font ---- */
+div[data-testid="stCodeBlock"] {{
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  border-radius: 14px !important;
+}}
+div[data-testid="stCodeBlock"] pre {{
+  background: transparent !important;
+}}
+div[data-testid="stCodeBlock"] code {{
+  color: rgba(255,255,255,0.95) !important;
+  text-shadow: 0 1px 10px rgba(0,0,0,0.25);
+}}
+
+/* Dataframe header text */
+div[data-testid="stDataFrame"] {{
+  background: rgba(255,255,255,0.06);
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+}}
+</style>
         """,
         unsafe_allow_html=True,
     )
 
 
-# Try known locations without crashing
-_BG_CANDIDATES = [
+# Try common paths: repo-local first, then /mnt/data fallback
+APP_DIR = Path(__file__).resolve().parent
+CANDIDATES = [
+    APP_DIR / "assets" / "mesmerizing-colorful-skies-illustration.jpg",
+    APP_DIR / "mesmerizing-colorful-skies-illustration.jpg",
     Path("/mnt/data/mesmerizing-colorful-skies-illustration.jpg"),
-    Path(__file__).parent / "assets" / "mesmerizing-colorful-skies-illustration.jpg",
-    Path(__file__).parent / "assets" / "background.jpg",
 ]
 
-_bg_used = None
-for p in _BG_CANDIDATES:
-    if p.exists():
-        _inject_background_image(p)
-        _bg_used = p
-        break
+BG_PATH = next((p for p in CANDIDATES if p.exists()), None)
 
-if _bg_used is None:
-    # non-fatal warning only
+if BG_PATH is not None:
+    inject_theme(BG_PATH)
+else:
     st.warning(
-        "Background image not found. Looked for:\n"
-        + "\n".join(f"- {str(p)}" for p in _BG_CANDIDATES)
+        "Background image not found. Put it at "
+        "`assets/mesmerizing-colorful-skies-illustration.jpg` (recommended) "
+        "or alongside app.py."
     )
 
-# Global typography + white text (tabs + labels + title + caption)
+# Custom title (white + Great Vibes) — replaces st.title/st.caption
 st.markdown(
     """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
-
-    /* Make most text white on dark overlay */
-    html, body, [class*="css"], .stMarkdown, .stText, .stCaption, label, p, li, span {
-        color: #ffffff !important;
-    }
-
-    /* Title: use Great Vibes */
-    h1, h1 span, h1 a {
-        font-family: 'Great Vibes', cursive !important;
-        font-weight: 400 !important;
-        font-size: 72px !important;
-        text-align: center !important;
-        color: #ffffff !important;
-        margin-bottom: 0.1rem !important;
-    }
-
-    /* Caption under title: centered + white */
-    div[data-testid="stCaptionContainer"] {
-        text-align: center !important;
-        color: #ffffff !important;
-        opacity: 0.92 !important;
-        font-size: 1.05rem !important;
-        margin-top: -8px !important;
-        margin-bottom: 18px !important;
-    }
-
-    /* Tabs text ("Write / People / Advanced") white */
-    button[data-baseweb="tab"] {
-        color: #ffffff !important;
-        font-weight: 600 !important;
-    }
-
-    /* Selected tab: slightly brighter */
-    button[aria-selected="true"][data-baseweb="tab"] {
-        color: #ffffff !important;
-        text-shadow: 0 0 10px rgba(255,255,255,0.22);
-    }
-
-    /* Keep inputs readable: force input text to dark */
-    input, textarea {
-        color: #111111 !important;
-    }
-
-    /* Make code blocks readable too (don’t force white on code text) */
-    pre, code {
-        color: inherit !important;
-    }
-    </style>
-    """,
+<div class="wow-title">The Weight of Words</div>
+<div class="wow-subtitle">Beautiful poem generator</div>
+""",
     unsafe_allow_html=True,
 )
 
-# Your original title + caption (kept, now styled by CSS)
-st.title("The Weight of Words")
-st.caption("Beautiful poem generator")
+# ================= APP (your working logic unchanged) =================
 
 # ---- Config validation ----
 try:
@@ -385,6 +429,7 @@ with main_tabs[2]:
     st.session_state["adv_syllable_hints"] = st.text_input(
         "Syllable hints (optional)", value=st.session_state["adv_syllable_hints"]
     )
+
     st.session_state["adv_tone"] = st.selectbox(
         "Tone",
         [
@@ -425,6 +470,7 @@ with main_tabs[2]:
             else 0
         ),
     )
+
     st.session_state["adv_show_debug"] = st.checkbox(
         "Show internal debug", value=bool(st.session_state["adv_show_debug"])
     )
