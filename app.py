@@ -88,58 +88,60 @@ if _bg_used is None:
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
-
-    /* Make most text white on dark overlay */
-    html, body, [class*="css"], .stMarkdown, .stText, .stCaption, label, p, li, span {
-        color: #ffffff !important;
+    /* ---------- GLOBAL TEXT ON BACKGROUND ---------- */
+    html, body, [class*="css"]  {
+        color: white !important;
     }
 
-    /* Title: use Great Vibes */
-    h1, h1 span, h1 a {
-        font-family: 'Great Vibes', cursive !important;
-        font-weight: 400 !important;
-        font-size: 72px !important;
-        text-align: center !important;
-        color: #ffffff !important;
-        margin-bottom: 0.1rem !important;
-    }
-
-    /* Caption under title: centered + white */
-    div[data-testid="stCaptionContainer"] {
-        text-align: center !important;
-        color: #ffffff !important;
-        opacity: 0.92 !important;
-        font-size: 1.05rem !important;
-        margin-top: -8px !important;
-        margin-bottom: 18px !important;
-    }
-
-    /* Tabs text ("Write / People / Advanced") white */
-    button[data-baseweb="tab"] {
-        color: #ffffff !important;
-        font-weight: 600 !important;
-    }
-
-    /* Selected tab: slightly brighter */
-    button[aria-selected="true"][data-baseweb="tab"] {
-        color: #ffffff !important;
-        text-shadow: 0 0 10px rgba(255,255,255,0.22);
-    }
-
-    /* Keep inputs readable: force input text to dark */
-    input, textarea {
-        color: #111111 !important;
-    }
-
-    /* Make code blocks readable too (don’t force white on code text) */
+    /* ---------- POEM OUTPUT (st.code / st.text_area look) ---------- */
     pre, code {
-        color: inherit !important;
+        background: rgba(0, 0, 0, 0.35) !important;  /* semi-transparent */
+        color: #ffffff !important;
+        border-radius: 12px;
+        font-size: 1rem;
     }
+
+    /* ---------- BUTTONS ---------- */
+    button[kind="primary"],
+    button[kind="secondary"],
+    .stButton > button {
+        background-color: rgba(255, 255, 255, 0.18) !important;
+        color: white !important;
+        border: 1px solid rgba(255, 255, 255, 0.45) !important;
+        border-radius: 10px !important;
+        font-weight: 500;
+        transition: all 0.2s ease-in-out;
+    }
+
+    .stButton > button:hover {
+        background-color: rgba(255, 255, 255, 0.32) !important;
+        border-color: white !important;
+        color: white !important;
+    }
+
+    /* ---------- TABS (Write / People / Advanced) ---------- */
+    button[data-baseweb="tab"] {
+        color: white !important;
+        font-weight: 500;
+    }
+
+    button[data-baseweb="tab"][aria-selected="true"] {
+        border-bottom: 3px solid white !important;
+    }
+
+    /* ---------- INPUTS / SELECTS ---------- */
+    input, textarea, select {
+        background: rgba(0, 0, 0, 0.35) !important;
+        color: white !important;
+        border: 1px solid rgba(255, 255, 255, 0.35) !important;
+        border-radius: 8px !important;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
 )
+
 
 # Your original title + caption (kept, now styled by CSS)
 st.title("The Weight of Words")
