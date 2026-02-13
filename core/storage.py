@@ -346,7 +346,9 @@ class SQLiteStorage(Storage):
             "general": int(row["reading_general_count"]),
             "advanced": int(row["reading_advanced_count"]),
         }
-        reading_guess = max(reading_counts, key=reading_counts.get) if total > 0 else None
+        reading_guess = (
+            max(reading_counts, key=reading_counts.get) if total > 0 else None
+        )
 
         ending_counts = {
             "soft": int(row["ending_soft_count"]),
@@ -528,7 +530,7 @@ class PostgresStorage(Storage):
                 cols = [desc[0] for desc in cur.description]
         return [dict(zip(cols, r)) for r in rows]
 
-    d    def get_version_averages(
+    def get_version_averages(
         self, user_id: str, poem_name: str
     ) -> Dict[str, Dict[str, Any]]:
         poem_name = poem_name.strip() or "Untitled"
@@ -673,7 +675,9 @@ class PostgresStorage(Storage):
             "general": int(data["reading_general_count"]),
             "advanced": int(data["reading_advanced_count"]),
         }
-        reading_guess = max(reading_counts, key=reading_counts.get) if total > 0 else None
+        reading_guess = (
+            max(reading_counts, key=reading_counts.get) if total > 0 else None
+        )
 
         ending_counts = {
             "soft": int(data["ending_soft_count"]),
