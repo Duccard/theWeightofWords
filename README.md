@@ -6,6 +6,10 @@ The app generates poems through a multi‑step creative pipeline (Generator - Cr
 
 ---
 
+## 🌐 Deployment Link
+
+https://theweightofwords.streamlit.app
+
 ## 📱 What This App Does
 
 * Generate high‑quality poems from simple prompts
