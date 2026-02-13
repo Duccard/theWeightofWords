@@ -1,13 +1,14 @@
 import uuid
+from typing import Any
+
 import streamlit as st
 from dotenv import load_dotenv
-from typing import Any, Iterable
 
 from core.config import load_config
 from core.logging_setup import setup_logger
 from core.llm_factory import create_llm
 from core.storage import get_storage
-from core.orchestrator import agent  # adjust if named differently
+import core.orchestrator as orch  # IMPORTANT: import module, not `agent`
 
 # -------------------------------------------------------------------
 # Setup
@@ -66,16 +67,19 @@ def build_user_memory(
     include_prefs: bool = True,
     include_people: bool = True,
 ) -> str:
+    """
+    Build a compact memory string from whatever storage APIs exist.
+    DO NOT require storage.build_user_memory().
+    """
     parts: list[str] = []
 
-    # Preferences (safe, optional)
     if include_prefs:
         prefs = {}
         for fn_name in ("get_user_preferences", "get_prefs"):
             fn = getattr(storage, fn_name, None)
             if callable(fn):
                 try:
-                    prefs = fn(user_id)
+                    prefs = fn(user_id) or {}
                 except Exception:
                     prefs = {}
                 break
@@ -85,12 +89,12 @@ def build_user_memory(
             if lines:
                 parts.append("USER PREFERENCES:\n" + "\n".join(lines))
 
-    # People memory
     if include_people:
         people = []
-        if hasattr(storage, "list_people"):
+        fn = getattr(storage, "list_people", None)
+        if callable(fn):
             try:
-                people = storage.list_people(user_id)
+                people = fn(user_id) or []
             except Exception:
                 people = []
 
@@ -106,14 +110,22 @@ def build_user_memory(
 
 
 def extract_text(result: Any) -> str:
+    """
+    Handles: str, dict-like, LangChain/RunOutput-like objects.
+    Avoids unpacking errors (RunOutput is not iterable).
+    """
     if result is None:
         return ""
+
     if isinstance(result, str):
         return result
+
     if isinstance(result, dict):
         for k in ("text", "content", "output", "final"):
-            if k in result and isinstance(result[k], str):
-                return result[k]
+            v = result.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+
         msgs = result.get("messages")
         if isinstance(msgs, list) and msgs:
             last = msgs[-1]
@@ -121,9 +133,76 @@ def extract_text(result: Any) -> str:
                 return last["content"]
             if hasattr(last, "content"):
                 return str(last.content)
+
+    # LangChain-ish objects
     if hasattr(result, "content"):
         return str(result.content)
+
+    # Graph/RunOutput-ish objects often have .output or .final
+    for attr in ("output", "final", "text"):
+        if hasattr(result, attr):
+            v = getattr(result, attr)
+            if isinstance(v, str) and v.strip():
+                return v
+
     return str(result)
+
+
+def call_orchestrator(mode: str, payload: dict) -> Any:
+    """
+    Call whichever orchestrator function exists in *your* repo.
+    This prevents ImportError and avoids hardcoding an `agent` object.
+    """
+    # Preferred: explicit functions
+    if mode in ("fast", "best"):
+        if hasattr(orch, "generate_only"):
+            fn = orch.generate_only
+        elif hasattr(orch, "generate"):
+            fn = orch.generate
+        elif hasattr(orch, "run"):
+            fn = orch.run
+        else:
+            raise RuntimeError(
+                "No generate function found in core.orchestrator (expected generate_only/generate/run)."
+            )
+
+    elif mode == "improve":
+        if hasattr(orch, "improve_only"):
+            fn = orch.improve_only
+        elif hasattr(orch, "improve"):
+            fn = orch.improve
+        elif hasattr(orch, "refine"):
+            fn = orch.refine
+        else:
+            # fallback: if only generate_and_improve exists, use it with draft
+            if hasattr(orch, "generate_and_improve"):
+                fn = orch.generate_and_improve
+            else:
+                raise RuntimeError(
+                    "No improve function found in core.orchestrator (expected improve_only/improve/refine)."
+                )
+
+    elif mode == "generate_and_improve":
+        if hasattr(orch, "generate_and_improve"):
+            fn = orch.generate_and_improve
+        else:
+            raise RuntimeError(
+                "No generate_and_improve function found in core.orchestrator."
+            )
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    # Try calling with llm if your orchestrator expects it; otherwise call without.
+    try:
+        return fn(payload, llm=llm, mode=mode)
+    except TypeError:
+        try:
+            return fn(payload, llm=llm)
+        except TypeError:
+            try:
+                return fn(payload, mode=mode)
+            except TypeError:
+                return fn(payload)
 
 
 # -------------------------------------------------------------------
@@ -163,6 +242,21 @@ st.session_state.setdefault("adv_apply_prefs", True)
 st.session_state.setdefault("adv_use_people", True)
 st.session_state.setdefault("adv_show_memory", False)
 
+# Optional extra constraints defaults (so you never KeyError)
+st.session_state.setdefault("adv_must_include", "")
+st.session_state.setdefault("adv_avoid", "")
+
+# -------------------------------------------------------------------
+# Create LLM once (only if your orchestrator uses it)
+# -------------------------------------------------------------------
+
+llm = create_llm(
+    cfg,
+    model=st.session_state["adv_model"],
+    temperature=st.session_state["adv_temperature"],
+    top_p=st.session_state["adv_top_p"],
+)
+
 # -------------------------------------------------------------------
 # Tabs
 # -------------------------------------------------------------------
@@ -187,7 +281,6 @@ with tab_advanced:
     )
 
     st.divider()
-
     st.session_state["adv_apply_prefs"] = st.checkbox(
         "Apply my preferences", value=st.session_state["adv_apply_prefs"]
     )
@@ -198,13 +291,14 @@ with tab_advanced:
         "Show injected memory", value=st.session_state["adv_show_memory"]
     )
 
-# Create LLM once
-llm = create_llm(
-    cfg,
-    model=st.session_state["adv_model"],
-    temperature=st.session_state["adv_temperature"],
-    top_p=st.session_state["adv_top_p"],
-)
+    st.divider()
+    st.markdown("### Extra constraints")
+    st.session_state["adv_must_include"] = st.text_input(
+        "Must include (comma-separated)", value=st.session_state["adv_must_include"]
+    )
+    st.session_state["adv_avoid"] = st.text_input(
+        "Avoid (comma-separated)", value=st.session_state["adv_avoid"]
+    )
 
 # ===========================
 # WRITE
@@ -222,6 +316,11 @@ with tab_write:
     )
     line_count = st.slider("Length (lines)", 4, 60, 12)
 
+    must_include = [
+        s.strip() for s in st.session_state["adv_must_include"].split(",") if s.strip()
+    ]
+    avoid = [s.strip() for s in st.session_state["adv_avoid"].split(",") if s.strip()]
+
     user_memory = ""
     if st.session_state["adv_apply_prefs"] or st.session_state["adv_use_people"]:
         user_memory = build_user_memory(
@@ -237,7 +336,6 @@ with tab_write:
     st.divider()
 
     col1, col2, col3, col4 = st.columns(4)
-
     with col1:
         gen_fast = st.button("⚡ Generate (fast)", use_container_width=True)
     with col2:
@@ -258,9 +356,11 @@ with tab_write:
             "style": style,
             "line_count": line_count,
             "memory": user_memory,
-            "mode": "fast" if gen_fast else "best",
+            "must_include": must_include,
+            "avoid": avoid,
         }
-        result = agent.invoke(payload)
+        mode = "fast" if gen_fast else "best"
+        result = call_orchestrator(mode, payload)
         text = extract_text(result).strip()
         if text:
             st.session_state["versions"].append(text)
@@ -274,9 +374,10 @@ with tab_write:
             "style": style,
             "line_count": line_count,
             "memory": user_memory,
-            "mode": "improve",
+            "must_include": must_include,
+            "avoid": avoid,
         }
-        result = agent.invoke(payload)
+        result = call_orchestrator("improve", payload)
         text = extract_text(result).strip()
         if text:
             st.session_state["versions"].append(text)
@@ -305,16 +406,24 @@ with tab_people:
         submitted = st.form_submit_button("Save")
 
     if submitted and name:
-        storage.add_person(USER_ID, name=name, relationship=relationship, note=note)
-        st.success("Saved")
+        fn = getattr(storage, "add_person", None)
+        if callable(fn):
+            fn(USER_ID, name=name, relationship=relationship, note=note)
+            st.success("Saved")
+        else:
+            st.error("Storage does not implement add_person().")
 
     st.divider()
 
-    people = storage.list_people(USER_ID)
+    people = []
+    fn = getattr(storage, "list_people", None)
+    if callable(fn):
+        people = fn(USER_ID) or []
+
     if not people:
         st.info("No people saved yet.")
     else:
         for p in people:
-            st.markdown(f"**{p['name']}** — {p.get('relationship','')}")
+            st.markdown(f"**{p.get('name','(no name)')}** — {p.get('relationship','')}")
             if p.get("note"):
                 st.caption(p["note"])
