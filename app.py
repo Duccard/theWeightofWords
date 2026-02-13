@@ -552,16 +552,26 @@ with main_tabs[0]:
     )
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+
     with c1:
+        st.markdown('<div class="wow-ghost">', unsafe_allow_html=True)
         btn_fast = st.button("Generate only (fast)")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with c2:
         btn_full = st.button("Generate + Improve", type="primary")
+
     with c3:
+        st.markdown('<div class="wow-ghost">', unsafe_allow_html=True)
         btn_again = st.button(
             "Improve again", disabled=len(st.session_state["versions"]) == 0
         )
+    st.markdown("</div>", unsafe_allow_html=True)
+
     with c4:
+        st.markdown('<div class="wow-ghost">', unsafe_allow_html=True)
         btn_clear = st.button("Clear versions")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     if btn_clear:
         st.session_state["versions"] = []
@@ -640,12 +650,16 @@ with main_tabs[0]:
             text = v["text"]
             st.markdown(f"### {label}")
             st.code(text)
+            st.markdown('<div class="wow-ghost">', unsafe_allow_html=True)
+
             st.download_button(
                 f"Download {label} (.txt)",
                 text,
                 file_name=f"{safe_title} - {label}.txt",
                 key=f"dl_{i}",
             )
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
     def rating_form(version_label: str, poem_text: str):
         if version_label in st.session_state["rated_versions"]:
@@ -677,34 +691,41 @@ with main_tabs[0]:
                 key=ending_key,
             )
             st.text_area("Optional feedback", key=feedback_key)
-            submitted = st.form_submit_button("Submit rating")
+            with st.form(key=form_key, clear_on_submit=False):
+                st.markdown('<div class="wow-ghost">', unsafe_allow_html=True)
+                st.radio(...)
+                st.selectbox(...)
+                st.text_area(...)
+                submitted = st.form_submit_button("Submit rating")
 
-        if submitted:
-            try:
-                storage.add_rating(
-                    user_id=USER_ID,
-                    poem_name=poem_name,
-                    version_label=version_label,
-                    request=req.model_dump(),
-                    poem_text=poem_text,
-                    rating=int(st.session_state[rating_key]),
-                    ending_pref=(st.session_state[ending_key] or None),
-                    feedback=(st.session_state[feedback_key] or None),
-                )
-                storage.update_taste_profile(
-                    user_id=USER_ID,
-                    request=req.model_dump(),
-                    rating=int(st.session_state[rating_key]),
-                    ending_pref=(st.session_state[ending_key] or None),
-                )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-                st.session_state["rated_versions"].add(version_label)
-                st.success(
-                    f"Saved rating: {stars_label(int(st.session_state[rating_key]))}"
-                )
-                st.rerun()
-            except Exception as e:
-                st.error(str(e))
+    if submitted:
+        try:
+            storage.add_rating(
+                user_id=USER_ID,
+                poem_name=poem_name,
+                version_label=version_label,
+                request=req.model_dump(),
+                poem_text=poem_text,
+                rating=int(st.session_state[rating_key]),
+                ending_pref=(st.session_state[ending_key] or None),
+                feedback=(st.session_state[feedback_key] or None),
+            )
+            storage.update_taste_profile(
+                user_id=USER_ID,
+                request=req.model_dump(),
+                rating=int(st.session_state[rating_key]),
+                ending_pref=(st.session_state[ending_key] or None),
+            )
+
+            st.session_state["rated_versions"].add(version_label)
+            st.success(
+                f"Saved rating: {stars_label(int(st.session_state[rating_key]))}"
+            )
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
 
     render_versions()
 
