@@ -32,7 +32,6 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
 
-    /* BACKGROUND */
     .stApp {{
         background-image: url("data:image/jpeg;base64,{bg_base64}");
         background-size: cover;
@@ -40,21 +39,13 @@ st.markdown(
         background-attachment: fixed;
     }}
 
-    /* ALL PLAIN TEXT = WHITE */
-    html, body, .stApp,
-    label,
-    .stMarkdown,
-    .stText,
-    .stCaption,
-    .stSubheader,
-    .stHeader,
-    .stInfo,
-    .stWarning,
-    .stSuccess {{
+    /* GLOBAL TEXT */
+    html, body, .stApp, label, .stMarkdown, .stText,
+    .stCaption, .stSubheader, .stHeader {{
         color: #ffffff !important;
     }}
 
-    /* TABS TEXT */
+    /* TABS */
     button[data-baseweb="tab"] {{
         color: #ffffff !important;
         font-weight: 600;
@@ -76,11 +67,39 @@ st.markdown(
         color: #ffffff;
         margin-bottom: 2rem;
     }}
+
+    /* INPUTS */
+    .stTextInput input,
+    .stTextArea textarea,
+    .stSelectbox div[role="combobox"] {{
+        background: rgba(255,255,255,0.95) !important;
+        color: #000000 !important;
+        border-radius: 10px;
+    }}
+
+    /* POEM OUTPUT */
+    pre, code {{
+        background: rgba(0,0,0,0.35) !important;
+        color: #ffffff !important;
+        border-radius: 12px;
+    }}
+
+    /* BUTTONS */
+    .stButton > button {{
+        background-color: rgba(255,255,255,0.18) !important;
+        color: #ffffff !important;
+        border-radius: 10px;
+    }}
+
+    .stButton > button[data-testid="baseButton-primary"] {{
+        background-color: #ff4b4b !important;
+        color: #ffffff !important;
+    }}
     </style>
 
     <div class="wow-title">The Weight of Words</div>
     <div class="wow-subtitle">Beautiful poem generator</div>
-    """,
+    """
     unsafe_allow_html=True,
 )
 
