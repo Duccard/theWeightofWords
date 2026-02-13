@@ -194,47 +194,151 @@ def build_user_memory(storage_obj, user_id, include_prefs, include_people):
 
 main_tabs = st.tabs(["Write", "People", "Advanced"])
 
-# ================= ADVANCED (REORDERED) =================
+# ================= ADVANCED =================
 with main_tabs[2]:
     st.subheader("Advanced settings")
-    c1, c2, c3 = st.columns(3)
-    st.session_state["adv_apply_prefs"] = c1.toggle(
-        "Apply preferences", value=st.session_state["adv_apply_prefs"]
+    st.caption(f"Storage backend: **{storage.backend_name()}**")
+
+    # ---- Personalization & constraints (toggles at top) ----
+    st.markdown("### Personalization & constraints")
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        st.session_state["adv_apply_prefs"] = st.toggle(
+            "Apply my preferences",
+            value=bool(st.session_state.get("adv_apply_prefs", True)),
+        )
+    with c2:
+        st.session_state["adv_use_people"] = st.toggle(
+            "Use people memory",
+            value=bool(st.session_state.get("adv_use_people", True)),
+        )
+    with c3:
+        st.session_state["adv_show_injected_memory"] = st.toggle(
+            "Show injected memory",
+            value=bool(st.session_state.get("adv_show_injected_memory", False)),
+        )
+
+    # ---- Style constraints (keep these in Advanced) ----
+    c4, c5, c6 = st.columns([1, 1, 1])
+    with c4:
+        st.session_state["adv_rhyme"] = st.checkbox(
+            "Rhyme",
+            value=bool(st.session_state.get("adv_rhyme", False)),
+        )
+    with c5:
+        st.session_state["adv_no_cliches"] = st.checkbox(
+            "No clichés mode",
+            value=bool(st.session_state.get("adv_no_cliches", True)),
+        )
+    with c6:
+        current_level = st.session_state.get("adv_reading_level", "general")
+        levels = ["simple", "general", "advanced"]
+        st.session_state["adv_reading_level"] = st.selectbox(
+            "Reading level",
+            levels,
+            index=(levels.index(current_level) if current_level in levels else 1),
+        )
+
+    # Audience (optional)
+    st.session_state["adv_audience"] = st.text_input(
+        "Audience (optional) — who this is for / who will read it",
+        value=st.session_state.get("adv_audience", ""),
+        help="Helps the model choose references and vibe. Example: 'my friend group', 'my girlfriend', 'my boss'.",
     )
-    st.session_state["adv_use_people"] = c2.toggle(
-        "Use people memory", value=st.session_state["adv_use_people"]
+
+    st.divider()
+
+    # ---- Model ----
+    st.markdown("### Model")
+    model_choices = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"]
+    current_model = st.session_state.get("adv_model", "gpt-4o-mini")
+    st.session_state["adv_model"] = st.selectbox(
+        "Model",
+        model_choices,
+        index=(
+            model_choices.index(current_model) if current_model in model_choices else 0
+        ),
     )
-    st.session_state["adv_show_injected_memory"] = c3.toggle(
-        "Show memory", value=st.session_state["adv_show_injected_memory"]
+
+    st.session_state["adv_temperature"] = st.slider(
+        "Temperature",
+        0.0,
+        1.5,
+        float(st.session_state.get("adv_temperature", 0.9)),
+        0.1,
+    )
+
+    st.session_state["adv_top_p"] = st.slider(
+        "Top-p",
+        0.1,
+        1.0,
+        float(st.session_state.get("adv_top_p", 0.95)),
+        0.05,
+    )
+
+    st.divider()
+
+    # ---- Extra constraints ----
+    st.markdown("### Extra constraints")
+    st.session_state["adv_must_include"] = st.text_input(
+        "Must include (comma-separated)",
+        value=st.session_state.get("adv_must_include", ""),
+    )
+    st.session_state["adv_avoid"] = st.text_input(
+        "Avoid (comma-separated)",
+        value=st.session_state.get("adv_avoid", ""),
+    )
+    st.session_state["adv_syllable_hints"] = st.text_input(
+        "Syllable hints (optional)",
+        value=st.session_state.get("adv_syllable_hints", ""),
+    )
+
+    tone_choices = [
+        "warm",
+        "funny",
+        "romantic",
+        "somber",
+        "hopeful",
+        "angry",
+        "motivational",
+        "surreal",
+        "minimalist",
+    ]
+    current_tone = st.session_state.get("adv_tone", "warm")
+    st.session_state["adv_tone"] = st.selectbox(
+        "Tone",
+        tone_choices,
+        index=(tone_choices.index(current_tone) if current_tone in tone_choices else 0),
     )
 
     st.session_state["adv_show_debug"] = st.checkbox(
-        "Show internal debug", value=st.session_state["adv_show_debug"]
-    )  # MOVED UP
+        "Show internal debug",
+        value=bool(st.session_state.get("adv_show_debug", False)),
+    )
 
     st.divider()
-    st.markdown("### Model & Constraints")
-    st.session_state["adv_model"] = st.selectbox(
-        "Model", ["gpt-4o-mini", "gpt-4o"], index=0
-    )
-    st.session_state["adv_temperature"] = st.slider(
-        "Temperature", 0.0, 1.5, float(st.session_state["adv_temperature"])
-    )
 
-    st.session_state["adv_must_include"] = st.text_input(
-        "Must include", value=st.session_state["adv_must_include"]
-    )
-    st.session_state["adv_avoid"] = st.text_input(
-        "Avoid", value=st.session_state["adv_avoid"]
-    )
-    st.session_state["adv_reading_level"] = st.selectbox(
-        "Reading level", ["simple", "general", "advanced"], index=1
-    )
-    st.session_state["adv_tone"] = st.selectbox(
-        "Tone",
-        ["warm", "funny", "romantic", "somber", "hopeful", "minimalist"],
-        index=0,
-    )
+    # ---- Data ----
+    st.markdown("### Data")
+    show_taste = st.checkbox("See my taste profile", value=False)
+    if show_taste:
+        try:
+            taste = storage.get_taste_profile(USER_ID)
+            st.json(taste)
+        except Exception as e:
+            st.warning(f"Could not load taste profile: {e}")
+
+    st.markdown("### Recent ratings (last 10)")
+    try:
+        recent = storage.list_ratings(USER_ID, limit=10)
+        if not recent:
+            st.info("No ratings yet.")
+        else:
+            st.dataframe(recent, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Could not load ratings yet: {e}")
+
 
 # ================= PEOPLE =================
 with main_tabs[1]:
