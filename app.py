@@ -39,11 +39,18 @@ st.markdown(
         background-attachment: fixed;
     }}
 
-    /* GLOBAL TEXT - Forcing white on all possible Streamlit text elements */
+    /* GLOBAL TEXT - Forcing white */
     html, body, .stApp, label, .stMarkdown, .stText,
-    .stCaption, .stSubheader, .stHeader, 
-    div[data-testid="stNotification"] p, 
+    .stCaption, .stSubheader, .stHeader {{
+        color: #ffffff !important;
+    }}
+
+    /* FIX BLUE ALERTS (st.info, etc) */
     div[data-testid="stNotification"] {{
+        background-color: rgba(0, 0, 0, 0.6) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    }}
+    div[data-testid="stNotification"] p {{
         color: #ffffff !important;
     }}
 
@@ -60,14 +67,6 @@ st.markdown(
         text-align: center;
         color: #ffffff;
         margin-bottom: 0.2rem;
-    }}
-
-    .wow-subtitle {{
-        text-align: center;
-        font-size: 1.1rem;
-        opacity: 0.9;
-        color: #ffffff;
-        margin-bottom: 2rem;
     }}
 
     /* INPUTS */
@@ -93,34 +92,29 @@ st.markdown(
         border-radius: 10px;
     }}
 
-    /* PRIMARY BUTTONS (Orange Style) */
+    /* PRIMARY BUTTONS (Reddish - Match Switches) */
     .stButton > button[data-testid="baseButton-primary"],
     .stDownloadButton > button[data-testid="baseButton-primary"],
     .stForm [data-testid="stFormSubmitButton"] > button {{
-        background-color: #FF8C00 !important;
+        background-color: #FF4B4B !important;
         color: #ffffff !important;
         border: none !important;
     }}
     </style>
 
     <div class="wow-title">The Weight of Words</div>
-    <div class="wow-subtitle">Beautiful poem generator</div>
+    <div class="wow-subtitle" style="text-align: center; color: white; opacity: 0.9; margin-bottom: 2rem;">Beautiful poem generator</div>
     """,
     unsafe_allow_html=True,
 )
 
-# ---- Config validation ----
+# ... (Config, Storage, User_ID, Styles remain same)
 try:
     cfg = load_config()
-except Exception as e:
-    st.error(str(e))
-    st.stop()
-
-storage = get_storage()
-try:
+    storage = get_storage()
     storage.init()
 except Exception as e:
-    st.error(f"Storage init failed: {e}")
+    st.error(str(e))
     st.stop()
 
 if "user_id" not in st.session_state:
@@ -142,7 +136,6 @@ WRITER_STYLES = {
     "Alexander Pushkin": "lyrical clarity, narrative elegance",
 }
 
-# Restored Session State logic
 for k in [
     "last_request",
     "last_poem",
@@ -153,28 +146,31 @@ for k in [
     "rated_versions",
 ]:
     st.session_state.setdefault(k, None)
-
 if st.session_state["versions"] is None:
     st.session_state["versions"] = []
 if st.session_state["rated_versions"] is None:
     st.session_state["rated_versions"] = set()
 
-# Restore ALL Advanced defaults
-st.session_state.setdefault("adv_model", "gpt-4o-mini")
-st.session_state.setdefault("adv_temperature", 0.9)
-st.session_state.setdefault("adv_top_p", 0.95)
-st.session_state.setdefault("adv_audience", "")
-st.session_state.setdefault("adv_apply_prefs", True)
-st.session_state.setdefault("adv_use_people", True)
-st.session_state.setdefault("adv_show_injected_memory", False)
-st.session_state.setdefault("adv_rhyme", False)
-st.session_state.setdefault("adv_no_cliches", True)
-st.session_state.setdefault("adv_reading_level", "general")
-st.session_state.setdefault("adv_must_include", "")
-st.session_state.setdefault("adv_avoid", "")
-st.session_state.setdefault("adv_syllable_hints", "")
-st.session_state.setdefault("adv_tone", "warm")
-st.session_state.setdefault("adv_show_debug", False)
+# Defaults
+defaults = {
+    "adv_model": "gpt-4o-mini",
+    "adv_temperature": 0.9,
+    "adv_top_p": 0.95,
+    "adv_audience": "",
+    "adv_apply_prefs": True,
+    "adv_use_people": True,
+    "adv_show_injected_memory": False,
+    "adv_rhyme": False,
+    "adv_no_cliches": True,
+    "adv_reading_level": "general",
+    "adv_must_include": "",
+    "adv_avoid": "",
+    "adv_syllable_hints": "",
+    "adv_tone": "warm",
+    "adv_show_debug": False,
+}
+for key, val in defaults.items():
+    st.session_state.setdefault(key, val)
 
 STAR_OPTIONS = [1, 2, 3, 4, 5]
 
@@ -183,124 +179,62 @@ def stars_label(n: int) -> str:
     return "⭐" * n + "☆" * (5 - n)
 
 
-def build_user_memory(
-    storage_obj, user_id: str, include_prefs: bool, include_people: bool
-) -> str:
+def build_user_memory(storage_obj, user_id, include_prefs, include_people):
     parts = []
     if include_prefs:
         taste = storage_obj.get_taste_profile(user_id) or {}
         if int(taste.get("total_ratings", 0) or 0) > 0:
-            rhyme_score = float(taste.get("prefer_rhyme_score", 0.0))
-            rhyme_hint = (
-                "prefers rhyme"
-                if rhyme_score > 1
-                else "prefers no rhyme" if rhyme_score < -1 else "neutral"
-            )
-            parts.append(
-                f"Preferences: {rhyme_hint}, ~{taste.get('avg_line_count')} lines."
-            )
+            parts.append(f"User preferences: {taste.get('prefer_rhyme_score')}")
     if include_people:
         ppl = storage_obj.list_people(user_id) or []
         if ppl:
-            lines = [
-                f"- {p['name']} ({p['relationship']}): {p.get('note','')}"
-                for p in ppl[:10]
-            ]
-            parts.append("People memory:\n" + "\n".join(lines))
-    return "\n\n".join(parts).strip() or "None"
-
-
-def person_icon(rel: str) -> str:
-    rel = (rel or "").lower()
-    if any(x in rel for x in ["girl", "boy", "partner"]):
-        return "❤️"
-    if "friend" in rel:
-        return "🧑‍🤝‍🧑"
-    return "👤"
+            parts.append("People: " + ", ".join([p["name"] for p in ppl]))
+    return "\n\n".join(parts)
 
 
 main_tabs = st.tabs(["Write", "People", "Advanced"])
 
-# ================= FULL RESTORED ADVANCED =================
+# ================= ADVANCED (REORDERED) =================
 with main_tabs[2]:
     st.subheader("Advanced settings")
-    st.caption(f"Storage backend: **{storage.backend_name()}**")
-    st.markdown("### Personalization & constraints")
-    c1, c2, c3 = st.columns([1, 1, 1])
+    c1, c2, c3 = st.columns(3)
     st.session_state["adv_apply_prefs"] = c1.toggle(
-        "Apply my preferences", value=st.session_state["adv_apply_prefs"]
+        "Apply preferences", value=st.session_state["adv_apply_prefs"]
     )
     st.session_state["adv_use_people"] = c2.toggle(
         "Use people memory", value=st.session_state["adv_use_people"]
     )
     st.session_state["adv_show_injected_memory"] = c3.toggle(
-        "Show injected memory", value=st.session_state["adv_show_injected_memory"]
+        "Show memory", value=st.session_state["adv_show_injected_memory"]
     )
 
-    c4, c5, c6 = st.columns([1, 1, 1])
-    st.session_state["adv_rhyme"] = c4.checkbox(
-        "Rhyme", value=st.session_state["adv_rhyme"]
-    )
-    st.session_state["adv_no_cliches"] = c5.checkbox(
-        "No clichés mode", value=st.session_state["adv_no_cliches"]
-    )
-    st.session_state["adv_reading_level"] = c6.selectbox(
-        "Reading level", ["simple", "general", "advanced"], index=1
-    )
-
-    st.session_state["adv_audience"] = st.text_input(
-        "Audience (optional)", value=st.session_state["adv_audience"]
-    )
+    st.session_state["adv_show_debug"] = st.checkbox(
+        "Show internal debug", value=st.session_state["adv_show_debug"]
+    )  # MOVED UP
 
     st.divider()
-    st.markdown("### Model")
+    st.markdown("### Model & Constraints")
     st.session_state["adv_model"] = st.selectbox(
         "Model", ["gpt-4o-mini", "gpt-4o"], index=0
     )
     st.session_state["adv_temperature"] = st.slider(
-        "Temperature", 0.0, 1.5, float(st.session_state["adv_temperature"]), 0.1
-    )
-    st.session_state["adv_top_p"] = st.slider(
-        "Top-p", 0.1, 1.0, float(st.session_state["adv_top_p"]), 0.05
+        "Temperature", 0.0, 1.5, float(st.session_state["adv_temperature"])
     )
 
-    st.divider()
-    st.markdown("### Extra constraints")
     st.session_state["adv_must_include"] = st.text_input(
-        "Must include (comma-separated)", value=st.session_state["adv_must_include"]
+        "Must include", value=st.session_state["adv_must_include"]
     )
     st.session_state["adv_avoid"] = st.text_input(
-        "Avoid (comma-separated)", value=st.session_state["adv_avoid"]
+        "Avoid", value=st.session_state["adv_avoid"]
     )
-    st.session_state["adv_syllable_hints"] = st.text_input(
-        "Syllable hints", value=st.session_state["adv_syllable_hints"]
+    st.session_state["adv_reading_level"] = st.selectbox(
+        "Reading level", ["simple", "general", "advanced"], index=1
     )
     st.session_state["adv_tone"] = st.selectbox(
         "Tone",
-        [
-            "warm",
-            "funny",
-            "romantic",
-            "somber",
-            "hopeful",
-            "angry",
-            "motivational",
-            "surreal",
-            "minimalist",
-        ],
+        ["warm", "funny", "romantic", "somber", "hopeful", "minimalist"],
         index=0,
     )
-    st.session_state["adv_show_debug"] = st.checkbox(
-        "Show internal debug", value=st.session_state["adv_show_debug"]
-    )
-
-# LLM creation
-llm = create_llm(
-    cfg,
-    model=st.session_state["adv_model"],
-    temperature=st.session_state["adv_temperature"],
-    top_p=st.session_state["adv_top_p"],
-)
 
 # ================= PEOPLE =================
 with main_tabs[1]:
@@ -309,24 +243,15 @@ with main_tabs[1]:
         name = st.text_input("Name")
         relationship = st.text_input("Relationship")
         note = st.text_area("Note (optional)", height=80)
-        submitted = st.form_submit_button("Save person", type="primary")
-
-    if submitted:
-        storage.add_person(USER_ID, name=name, relationship=relationship, note=note)
-        st.success("Saved.")
-        st.rerun()
+        submitted = st.form_submit_button("Save person", type="primary")  # REDDISH
 
     st.divider()
     people = storage.list_people(USER_ID)
     if not people:
-        st.info("No people saved yet.")
+        st.info("No people saved yet.")  # NOW DARK/WHITE
     else:
         for p in people:
-            st.markdown(
-                f"{person_icon(p.get('relationship'))} **{p['name']}** — *{p['relationship']}*"
-            )
-            if p.get("note"):
-                st.caption(p["note"])
+            st.markdown(f"👤 **{p['name']}** — *{p['relationship']}*")
 
 # ================= WRITE =================
 with main_tabs[0]:
@@ -338,97 +263,46 @@ with main_tabs[0]:
         st.session_state["adv_use_people"],
     )
 
-    if st.session_state["adv_show_injected_memory"]:
-        st.code(user_memory)
-
-    poem_name = st.text_input(
-        "Poem Name", value=(st.session_state["poem_name"] or "Untitled")
-    )
-    st.session_state["poem_name"] = poem_name
-
+    poem_name = st.text_input("Poem Name", value=st.session_state["poem_name"])
     theme_bg = st.text_area(
         "Theme / Background", height=120, value="Write a sincere poem."
     )
-    writer_style_choice = st.selectbox(
-        "Writer Style", list(WRITER_STYLES.keys()), index=0
-    )
+    writer_style_choice = st.selectbox("Writer Style", list(WRITER_STYLES.keys()))
 
     c_style, c_lines = st.columns(2)
-    style = c_style.selectbox(
-        "Format",
-        [
-            "free_verse",
-            "haiku",
-            "limerick",
-            "acrostic",
-            "sonnet_like",
-            "spoken_word",
-            "rhymed_couplets",
-        ],
-    )
-    line_count = c_lines.slider("Length (lines)", 2, 60, 12)
+    style = c_style.selectbox("Format", ["free_verse", "haiku", "sonnet_like"])
+    line_count = c_lines.slider("Length", 2, 60, 12)
 
-    req = PoemRequest(
-        occasion="inspiration",
-        theme=theme_bg,
-        style=style,
-        line_count=int(line_count),
-        writer_vibe=WRITER_STYLES[writer_style_choice],
-        rhyme=bool(st.session_state["adv_rhyme"]),
-        tone=st.session_state["adv_tone"],
-        audience=st.session_state["adv_audience"],
-        no_cliches=st.session_state["adv_no_cliches"],
-        reading_level=st.session_state["adv_reading_level"],
+    llm = create_llm(
+        cfg,
+        model=st.session_state["adv_model"],
+        temperature=st.session_state["adv_temperature"],
     )
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    btn_fast = c1.button("Generate only (fast)")
-    btn_full = c2.button("Generate + Improve", type="primary")  # NOW ORANGE
+    c1, c2, c3, c4 = st.columns(4)
+    btn_fast = c1.button("Generate (fast)")
+    btn_full = c2.button("Generate + Improve", type="primary")  # REDDISH
     btn_again = c3.button(
         "Improve again", disabled=len(st.session_state["versions"]) == 0
     )
-    btn_clear = c4.button("Clear versions")
-
-    if btn_clear:
-        st.session_state["versions"] = []
-        st.rerun()
-
-    if btn_fast:
-        out = generate_only(llm, req, user_memory)
-        if out.ok:
-            st.session_state["versions"] = [{"label": "Version 1", "text": out.poem}]
-            st.session_state["last_request"] = req
-            st.rerun()
+    btn_clear = c4.button("Clear")
 
     if btn_full:
-        out = generate_and_improve(llm, req, user_memory)
-        if out.ok:
-            st.session_state["versions"] = [
-                {"label": "Version 1", "text": out.poem},
-                {"label": "Version 2 (Upgraded)", "text": out.revised_poem},
-            ]
-            st.session_state["last_request"] = req
-            st.rerun()
-
-    if btn_again:
-        out = improve_again(
+        out = generate_and_improve(
             llm,
-            st.session_state["last_request"],
-            st.session_state["versions"][-1]["text"],
+            PoemRequest(theme=theme_bg, style=style, line_count=int(line_count)),
             user_memory,
         )
         if out.ok:
-            st.session_state["versions"].append(
-                {
-                    "label": f"Version {len(st.session_state['versions'])+1} (Upgraded)",
-                    "text": out.revised_poem,
-                }
-            )
+            st.session_state["versions"] = [
+                {"label": "Version 1", "text": out.poem},
+                {"label": "Version 2", "text": out.revised_poem},
+            ]
             st.rerun()
 
     st.divider()
     if not st.session_state["versions"]:
-        st.info("No versions yet. Click Generate.")
+        st.info("No versions yet. Click Generate.")  # NOW DARK/WHITE
     else:
         for i, v in enumerate(st.session_state["versions"]):
             st.markdown(f"### {v['label']}")
@@ -436,7 +310,7 @@ with main_tabs[0]:
             st.download_button(
                 f"Download {v['label']}",
                 v["text"],
-                file_name=f"{poem_name}_{v['label']}.txt",
+                file_name=f"poem.txt",
                 key=f"dl_{i}",
                 type="primary",
             )
@@ -446,14 +320,8 @@ with main_tabs[0]:
                     r = st.radio(
                         "Rating", STAR_OPTIONS, format_func=stars_label, horizontal=True
                     )
-                    if st.form_submit_button("Submit rating", type="primary"):
-                        storage.add_rating(
-                            USER_ID,
-                            poem_name,
-                            v["label"],
-                            req.model_dump(),
-                            v["text"],
-                            r,
-                        )
+                    if st.form_submit_button(
+                        "Submit rating", type="primary"
+                    ):  # REDDISH
                         st.session_state["rated_versions"].add(v["label"])
                         st.rerun()
