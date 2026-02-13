@@ -88,22 +88,40 @@ if _bg_used is None:
 st.markdown(
     """
     <style>
-    /* ---------- GLOBAL TEXT ON BACKGROUND ---------- */
-    html, body, [class*="css"]  {
-        color: white !important;
+    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+
+    /* ---------- GLOBAL TEXT COLOR ---------- */
+    html, body, [class*="css"] {
+        color: #ffffff !important;
     }
 
-    /* ---------- POEM OUTPUT (st.code / st.text_area look) ---------- */
+    /* ---------- TITLE ---------- */
+    .app-title {
+        font-family: 'Great Vibes', cursive;
+        font-size: 72px;
+        font-weight: 400;
+        text-align: center;
+        color: white;
+        margin-bottom: 0.2em;
+    }
+
+    .app-subtitle {
+        text-align: center;
+        font-size: 1.1rem;
+        opacity: 0.9;
+        color: white;
+        margin-bottom: 2rem;
+    }
+
+    /* ---------- POEM OUTPUT ---------- */
     pre, code {
-        background: rgba(0, 0, 0, 0.35) !important;  /* semi-transparent */
-        color: #ffffff !important;
+        background: rgba(0, 0, 0, 0.35) !important;
+        color: white !important;
         border-radius: 12px;
         font-size: 1rem;
     }
 
     /* ---------- BUTTONS ---------- */
-    button[kind="primary"],
-    button[kind="secondary"],
     .stButton > button {
         background-color: rgba(255, 255, 255, 0.18) !important;
         color: white !important;
@@ -116,10 +134,9 @@ st.markdown(
     .stButton > button:hover {
         background-color: rgba(255, 255, 255, 0.32) !important;
         border-color: white !important;
-        color: white !important;
     }
 
-    /* ---------- TABS (Write / People / Advanced) ---------- */
+    /* ---------- TABS ---------- */
     button[data-baseweb="tab"] {
         color: white !important;
         font-weight: 500;
@@ -129,15 +146,17 @@ st.markdown(
         border-bottom: 3px solid white !important;
     }
 
-    /* ---------- INPUTS / SELECTS ---------- */
+    /* ---------- INPUTS ---------- */
     input, textarea, select {
         background: rgba(0, 0, 0, 0.35) !important;
         color: white !important;
         border: 1px solid rgba(255, 255, 255, 0.35) !important;
         border-radius: 8px !important;
     }
-
     </style>
+
+    <div class="app-title">The Weight of Words</div>
+    <div class="app-subtitle">Beautiful poem generator</div>
     """,
     unsafe_allow_html=True,
 )
