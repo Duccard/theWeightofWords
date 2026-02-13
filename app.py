@@ -28,47 +28,59 @@ BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
 bg_base64 = load_bg_image_base64(BG_PATH)
 
 st.markdown(
-    """
+    f"""
     <style>
-    /* TARGETED ACTION BUTTONS — TRANSPARENT + WHITE */
+    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
 
-    /* Improve again & Clear versions */
-    .stButton > button:not([data-testid="baseButton-primary"]) {
-        background: transparent !important;
-        color: #ffffff !important;
-        border: 1.5px solid rgba(255,255,255,0.6) !important;
-        border-radius: 10px;
-        box-shadow: none !important;
-    }
+    /* BACKGROUND */
+    .stApp {{
+        background-image: url("data:image/jpeg;base64,{bg_base64}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }}
 
-    /* Download buttons */
-    button[kind="secondary"] {
-        background: transparent !important;
+    /* ALL PLAIN TEXT = WHITE */
+    html, body, .stApp,
+    label,
+    .stMarkdown,
+    .stText,
+    .stCaption,
+    .stSubheader,
+    .stHeader,
+    .stInfo,
+    .stWarning,
+    .stSuccess {{
         color: #ffffff !important;
-        border: 1.5px solid rgba(255,255,255,0.6) !important;
-        border-radius: 10px;
-        box-shadow: none !important;
-    }
+    }}
 
-    /* Submit rating (form submit buttons) */
-    form button {
-        background: transparent !important;
+    /* TABS TEXT */
+    button[data-baseweb="tab"] {{
         color: #ffffff !important;
-        border: 1.5px solid rgba(255,255,255,0.6) !important;
-        border-radius: 10px;
-        box-shadow: none !important;
-    }
+        font-weight: 600;
+    }}
 
-    /* REMOVE HOVER EFFECTS */
-    .stButton > button:hover,
-    button[kind="secondary"]:hover,
-    form button:hover {
-        background: transparent !important;
-        color: #ffffff !important;
-        border-color: rgba(255,255,255,0.6) !important;
-        transform: none !important;
-    }
+    /* TITLE */
+    .wow-title {{
+        font-family: 'Great Vibes', cursive;
+        font-size: 72px;
+        text-align: center;
+        color: #ffffff;
+        margin-bottom: 0.2rem;
+    }}
+
+    .wow-subtitle {{
+        text-align: center;
+        font-size: 1.1rem;
+        opacity: 0.9;
+        color: #ffffff;
+        margin-bottom: 2rem;
+    }}
+
     </style>
+
+    <div class="wow-title">The Weight of Words</div>
+    <div class="wow-subtitle">Beautiful poem generator</div>
     """,
     unsafe_allow_html=True,
 )
