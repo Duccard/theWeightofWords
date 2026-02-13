@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import uuid
-import base64
-from pathlib import Path
-
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -18,73 +15,6 @@ load_dotenv()
 logger = setup_logger()
 
 st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
-
-# ------------------------------------------------------------
-# UI ONLY: Background + Fonts + White text
-# ------------------------------------------------------------
-
-
-def _inject_background_image(bg_path: Path) -> None:
-    """Inject a full-page fixed background image (safe CSS injection)."""
-    try:
-        data = base64.b64encode(bg_path.read_bytes()).decode("utf-8")
-    except Exception as e:
-        st.warning(f"Could not read background image: {e}")
-        return
-
-    st.markdown(
-        f"""
-        <style>
-        .stApp {{
-            background-image: url("data:image/jpg;base64,{data}");
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-        }}
-
-        /* Soft dark overlay to keep white text readable */
-        .stApp::before {{
-            content: "";
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.38);
-            pointer-events: none;
-            z-index: 0;
-        }}
-
-        /* Keep app content above overlay */
-        .stApp > div {{
-            position: relative;
-            z-index: 1;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# Try known locations without crashing
-_BG_CANDIDATES = [
-    Path("/mnt/data/mesmerizing-colorful-skies-illustration.jpg"),
-    Path(__file__).parent / "assets" / "mesmerizing-colorful-skies-illustration.jpg",
-    Path(__file__).parent / "assets" / "background.jpg",
-]
-
-_bg_used = None
-for p in _BG_CANDIDATES:
-    if p.exists():
-        _inject_background_image(p)
-        _bg_used = p
-        break
-
-if _bg_used is None:
-    # non-fatal warning only
-    st.warning(
-        "Background image not found. Looked for:\n"
-        + "\n".join(f"- {str(p)}" for p in _BG_CANDIDATES)
-    )
-
-# Global typography + white text (tabs + labels + title + caption)
 st.markdown(
     """
     <style>
@@ -195,6 +125,20 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---- Config validation ----
+try:
+    cfg = load_config()
+except Exception as e:
+    st.error(str(e))
+    st.stop()
+
+# ---- Storage init (cloud-ready) ----
+storage = get_storage()
+try:
+    storage.init()
+except Exception as e:
+    st.error(f"Storage init failed: {e}")
+    st.stop()
 
 # stable per browser session (until auth)
 if "user_id" not in st.session_state:
