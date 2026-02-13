@@ -24,97 +24,58 @@ def load_bg_image_base64(path: Path) -> str:
 
 
 st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
+BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
+bg_base64 = load_bg_image_base64(BG_PATH)
+
 st.markdown(
-    """
+    f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
 
-    /* ---------- BACKGROUND IMAGE ---------- */
-    .stApp {
-        background: url("https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80");
+    /* BACKGROUND */
+    .stApp {{
+        background-image: url("data:image/jpeg;base64,{bg_base64}");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
-    }
+    }}
 
-    /* ---------- GLOBAL TEXT (WHITE) ---------- */
-    html, body, .stApp, label, .stMarkdown, .stText, .stCaption,
-    .stSubheader, .stHeader, .stTitle {
+    /* ALL PLAIN TEXT = WHITE */
+    html, body, .stApp,
+    label,
+    .stMarkdown,
+    .stText,
+    .stCaption,
+    .stSubheader,
+    .stHeader,
+    .stInfo,
+    .stWarning,
+    .stSuccess {{
         color: #ffffff !important;
-    }
+    }}
 
-    /* Tabs: Write / People / Advanced */
-    button[data-baseweb="tab"] {
+    /* TABS TEXT */
+    button[data-baseweb="tab"] {{
         color: #ffffff !important;
         font-weight: 600;
-    }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        border-bottom: 3px solid #ffffff !important;
-    }
+    }}
 
-    /* ---------- TITLE ---------- */
-    .wow-title {
+    /* TITLE */
+    .wow-title {{
         font-family: 'Great Vibes', cursive;
         font-size: 72px;
-        font-weight: 400;
         text-align: center;
         color: #ffffff;
-        margin-top: 0.5rem;
         margin-bottom: 0.2rem;
-    }
+    }}
 
-    .wow-subtitle {
+    .wow-subtitle {{
         text-align: center;
         font-size: 1.1rem;
         opacity: 0.9;
         color: #ffffff;
         margin-bottom: 2rem;
-    }
-
-    /* ---------- INPUT FIELDS ---------- */
-    .stTextInput input,
-    .stTextArea textarea,
-    .stSelectbox div[role="combobox"],
-    .stSelectbox input {
-        background: rgba(255, 255, 255, 0.95) !important;
-        color: #000000 !important;
-        border-radius: 10px !important;
-        border: 1px solid rgba(255,255,255,0.6) !important;
-    }
-
-    .stTextInput input::placeholder,
-    .stTextArea textarea::placeholder {
-        color: rgba(0,0,0,0.55) !important;
-    }
-
-    /* ---------- POEM OUTPUT ---------- */
-    pre, code {
-        background: rgba(0, 0, 0, 0.35) !important;
-        color: #ffffff !important;
-        border-radius: 12px;
-        font-size: 1rem;
-    }
-
-    /* ---------- BUTTONS ---------- */
-    .stButton > button {
-        background-color: rgba(255, 255, 255, 0.18) !important;
-        color: #ffffff !important;
-        border-radius: 10px !important;
-        border: 1px solid rgba(255,255,255,0.4) !important;
-        font-weight: 600;
-    }
-
-    .stButton > button:hover {
-        background-color: rgba(255,255,255,0.32) !important;
-    }
-
-    /* KEEP Generate + Improve ORANGE */
-    .stButton > button[kind="primary"],
-    .stButton > button[data-testid="baseButton-primary"] {
-        background-color: #ff4b4b !important;
-        color: #ffffff !important;
-        border: none !important;
-    }
+    }}
 
     </style>
 
