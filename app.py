@@ -10,103 +10,91 @@ from core.llm_factory import create_llm
 from core.orchestrator import generate_only, generate_and_improve, improve_again
 from agent.schemas import PoemRequest
 from core.storage import get_storage
+from pathlib import Path
+import base64
 
 load_dotenv()
 logger = setup_logger()
 
+
+def load_bg_image_base64(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return base64.b64encode(path.read_bytes()).decode()
+
+
 st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
+BG_PATH = Path(__file__).parent / "assets" / "background.jpg"
+bg_base64 = load_bg_image_base64(BG_PATH)
+
 st.markdown(
-    """
+    f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
 
-    /* ---------- BACKGROUND IMAGE ---------- */
-    .stApp {
-        background: url("https://www.freepik.com/free-ai-image/mesmerizing-colorful-skies-illustration_381016425.htm#fromView=keyword&page=1&position=2&uuid=e31eac9e-9895-4e8b-b13e-3557b2adb47c&query=Anime+sky+with+clouds");
+    .stApp {{
+        background-image: url("data:image/jpeg;base64,{bg_base64}");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
-    }
+    }}
 
-    /* ---------- GLOBAL TEXT (WHITE) ---------- */
-    html, body, .stApp, label, .stMarkdown, .stText, .stCaption,
-    .stSubheader, .stHeader, .stTitle {
+    /* GLOBAL TEXT */
+    html, body, .stApp, label, .stMarkdown, .stText,
+    .stCaption, .stSubheader, .stHeader {{
         color: #ffffff !important;
-    }
+    }}
 
-    /* Tabs: Write / People / Advanced */
-    button[data-baseweb="tab"] {
+    /* TABS */
+    button[data-baseweb="tab"] {{
         color: #ffffff !important;
         font-weight: 600;
-    }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        border-bottom: 3px solid #ffffff !important;
-    }
+    }}
 
-    /* ---------- TITLE ---------- */
-    .wow-title {
+    /* TITLE */
+    .wow-title {{
         font-family: 'Great Vibes', cursive;
         font-size: 72px;
-        font-weight: 400;
         text-align: center;
         color: #ffffff;
-        margin-top: 0.5rem;
         margin-bottom: 0.2rem;
-    }
+    }}
 
-    .wow-subtitle {
+    .wow-subtitle {{
         text-align: center;
         font-size: 1.1rem;
         opacity: 0.9;
         color: #ffffff;
         margin-bottom: 2rem;
-    }
+    }}
 
-    /* ---------- INPUT FIELDS ---------- */
+    /* INPUTS */
     .stTextInput input,
     .stTextArea textarea,
-    .stSelectbox div[role="combobox"],
-    .stSelectbox input {
-        background: rgba(255, 255, 255, 0.95) !important;
+    .stSelectbox div[role="combobox"] {{
+        background: rgba(255,255,255,0.95) !important;
         color: #000000 !important;
-        border-radius: 10px !important;
-        border: 1px solid rgba(255,255,255,0.6) !important;
-    }
+        border-radius: 10px;
+    }}
 
-    .stTextInput input::placeholder,
-    .stTextArea textarea::placeholder {
-        color: rgba(0,0,0,0.55) !important;
-    }
-
-    /* ---------- POEM OUTPUT ---------- */
-    pre, code {
-        background: rgba(0, 0, 0, 0.35) !important;
+    /* POEM OUTPUT */
+    pre, code {{
+        background: rgba(0,0,0,0.35) !important;
         color: #ffffff !important;
         border-radius: 12px;
-        font-size: 1rem;
-    }
+    }}
 
-    /* ---------- BUTTONS ---------- */
-    .stButton > button {
-        background-color: rgba(255, 255, 255, 0.18) !important;
+    /* BUTTONS */
+    .stButton > button {{
+        background-color: rgba(255,255,255,0.18) !important;
         color: #ffffff !important;
-        border-radius: 10px !important;
-        border: 1px solid rgba(255,255,255,0.4) !important;
-        font-weight: 600;
-    }
+        border-radius: 10px;
+    }}
 
-    .stButton > button:hover {
-        background-color: rgba(255,255,255,0.32) !important;
-    }
-
-    /* KEEP Generate + Improve ORANGE */
-    .stButton > button[kind="primary"],
-    .stButton > button[data-testid="baseButton-primary"] {
+    .stButton > button[data-testid="baseButton-primary"] {{
         background-color: #ff4b4b !important;
         color: #ffffff !important;
-        border: none !important;
-    }
-
+    }}
     </style>
 
     <div class="wow-title">The Weight of Words</div>
