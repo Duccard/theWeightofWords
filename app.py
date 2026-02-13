@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 import uuid
+
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -15,6 +18,56 @@ load_dotenv()
 logger = setup_logger()
 
 st.set_page_config(page_title="The Weight of Words", page_icon="📜", layout="wide")
+
+# --- UI Theme: Great Vibes title + local background image ---
+BG_PATH = Path("/mnt/data/mesmerizing-colorful-skies-illustration.jpg")
+
+
+def inject_theme(background_path: Path) -> None:
+    bg_bytes = background_path.read_bytes()
+    bg_b64 = base64.b64encode(bg_bytes).decode("utf-8")
+
+    st.markdown(
+        f"""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+
+        /* App background */
+        [data-testid="stAppViewContainer"] > .main {{
+            background-image: url("data:image/jpg;base64,{bg_b64}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+
+        /* Make content readable over the image */
+        [data-testid="stMainBlockContainer"] {{
+            background: rgba(255, 255, 255, 0.84);
+            border-radius: 18px;
+            padding: 1.5rem 1.5rem 2rem 1.5rem;
+            backdrop-filter: blur(2px);
+        }}
+
+        /* Title font */
+        h1 {{
+            font-family: "Great Vibes", cursive !important;
+            font-weight: 400 !important;
+            letter-spacing: 0.5px;
+            font-size: 64px;
+            margin-bottom: 0.25rem;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# only inject if the file exists (prevents startup crash if path changes)
+if BG_PATH.exists():
+    inject_theme(BG_PATH)
+else:
+    st.warning(f"Background image not found at: {BG_PATH}")
+
 st.title("The Weight of Words")
 st.caption("Beautiful poem generator")
 
@@ -319,7 +372,7 @@ with main_tabs[2]:
     except Exception as e:
         st.warning(f"Could not load ratings yet: {e}")
 
-# LLM creation (always has defaults in session_state)
+# ---- LLM creation ----
 llm = create_llm(
     cfg,
     model=st.session_state["adv_model"],
@@ -404,6 +457,7 @@ with main_tabs[0]:
         ],
         index=0,
     )
+
     style = st.selectbox(
         "Format",
         [
@@ -417,6 +471,7 @@ with main_tabs[0]:
         ],
         index=0,
     )
+
     line_count = st.slider("Length (lines)", 2, 60, 12)
 
     acrostic_word = None
@@ -469,7 +524,6 @@ with main_tabs[0]:
         st.session_state["last_revised"] = None
         st.rerun()
 
-    # ---- Button actions: update state then rerun ----
     if btn_fast:
         out = generate_only(llm, req, user_memory=user_memory)
         if not out.ok:
@@ -477,8 +531,6 @@ with main_tabs[0]:
         else:
             st.session_state["last_request"] = req
             st.session_state["last_poem"] = out.poem
-            st.session_state["last_critique"] = None
-            st.session_state["last_revised"] = None
             st.session_state["versions"] = [{"label": "Version 1", "text": out.poem}]
             st.rerun()
 
@@ -505,23 +557,11 @@ with main_tabs[0]:
         if not out.ok:
             st.error(out.error_user)
         else:
-            new_text = (out.revised_poem or "").strip()
-            prev_text = (base_poem or "").strip()
-
-            if new_text == prev_text:
-                st.error(
-                    "Improve again produced the same poem. Try again (or adjust constraints)."
-                )
-            else:
-                st.session_state["last_critique"] = out.critique
-                st.session_state["last_revised"] = out.revised_poem
-
-                next_num = len(st.session_state["versions"]) + 1
-                label = f"Version {next_num} (Upgraded)"
-                st.session_state["versions"].append(
-                    {"label": label, "text": out.revised_poem}
-                )
-                st.rerun()
+            next_num = len(st.session_state["versions"]) + 1
+            st.session_state["versions"].append(
+                {"label": f"Version {next_num} (Upgraded)", "text": out.revised_poem}
+            )
+            st.rerun()
 
     st.divider()
     st.subheader("Output")
@@ -533,83 +573,13 @@ with main_tabs[0]:
 
         safe_title = (poem_name.strip() or "Untitled").replace("/", "-")
         for i, v in enumerate(st.session_state["versions"], start=1):
-            label = v["label"]
-            text = v["text"]
-            st.markdown(f"### {label}")
-            st.code(text)
+            st.markdown(f"### {v['label']}")
+            st.code(v["text"])
             st.download_button(
-                f"Download {label} (.txt)",
-                text,
-                file_name=f"{safe_title} - {label}.txt",
+                f"Download {v['label']} (.txt)",
+                v["text"],
+                file_name=f"{safe_title} - {v['label']}.txt",
                 key=f"dl_{i}",
             )
 
-    def rating_form(version_label: str, poem_text: str):
-        if version_label in st.session_state["rated_versions"]:
-            return
-
-        st.divider()
-        st.subheader(f"Rate {version_label}")
-
-        form_key = (
-            f"rate_{version_label}".replace(" ", "_").replace("(", "").replace(")", "")
-        )
-        rating_key = f"rating_{form_key}"
-        feedback_key = f"feedback_{form_key}"
-        ending_key = f"ending_{form_key}"
-
-        with st.form(key=form_key, clear_on_submit=False):
-            st.radio(
-                "Rating",
-                STAR_OPTIONS,
-                index=3,
-                format_func=stars_label,
-                horizontal=True,
-                key=rating_key,
-            )
-            st.selectbox(
-                "Ending preference (optional)",
-                ["", "soft", "twist", "punchline", "hopeful"],
-                index=0,
-                key=ending_key,
-            )
-            st.text_area("Optional feedback", key=feedback_key)
-            submitted = st.form_submit_button("Submit rating")
-
-        if submitted:
-            try:
-                storage.add_rating(
-                    user_id=USER_ID,
-                    poem_name=poem_name,
-                    version_label=version_label,
-                    request=req.model_dump(),
-                    poem_text=poem_text,
-                    rating=int(st.session_state[rating_key]),
-                    ending_pref=(st.session_state[ending_key] or None),
-                    feedback=(st.session_state[feedback_key] or None),
-                )
-                storage.update_taste_profile(
-                    user_id=USER_ID,
-                    request=req.model_dump(),
-                    rating=int(st.session_state[rating_key]),
-                    ending_pref=(st.session_state[ending_key] or None),
-                )
-
-                st.session_state["rated_versions"].add(version_label)
-                st.success(
-                    f"Saved rating: {stars_label(int(st.session_state[rating_key]))}"
-                )
-                st.rerun()
-            except Exception as e:
-                st.error(str(e))
-
     render_versions()
-
-    for v in st.session_state["versions"]:
-        rating_form(v["label"], v["text"])
-
-    if bool(st.session_state["adv_show_debug"]) and st.session_state.get(
-        "last_critique"
-    ):
-        st.markdown("#### Debug: critique (hidden by default)")
-        st.json(st.session_state["last_critique"])
