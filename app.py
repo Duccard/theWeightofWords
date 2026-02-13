@@ -430,51 +430,6 @@ with main_tabs[2]:
         "Syllable hints (optional)", value=st.session_state["adv_syllable_hints"]
     )
 
-    st.session_state["adv_tone"] = st.selectbox(
-        "Tone",
-        [
-            "warm",
-            "funny",
-            "romantic",
-            "somber",
-            "hopeful",
-            "angry",
-            "motivational",
-            "surreal",
-            "minimalist",
-        ],
-        index=(
-            [
-                "warm",
-                "funny",
-                "romantic",
-                "somber",
-                "hopeful",
-                "angry",
-                "motivational",
-                "surreal",
-                "minimalist",
-            ].index(st.session_state["adv_tone"])
-            if st.session_state["adv_tone"]
-            in [
-                "warm",
-                "funny",
-                "romantic",
-                "somber",
-                "hopeful",
-                "angry",
-                "motivational",
-                "surreal",
-                "minimalist",
-            ]
-            else 0
-        ),
-    )
-
-    st.session_state["adv_show_debug"] = st.checkbox(
-        "Show internal debug", value=bool(st.session_state["adv_show_debug"])
-    )
-
     st.divider()
     st.markdown("### Data")
     show_taste = st.checkbox("See my taste profile", value=False)
