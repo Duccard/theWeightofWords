@@ -22,7 +22,7 @@ st.markdown(
 
     /* ---------- BACKGROUND IMAGE ---------- */
     .stApp {
-        background: url("https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80");
+        background: url("https://www.freepik.com/free-ai-image/mesmerizing-colorful-skies-illustration_381016425.htm#fromView=keyword&page=1&position=2&uuid=e31eac9e-9895-4e8b-b13e-3557b2adb47c&query=Anime+sky+with+clouds");
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
