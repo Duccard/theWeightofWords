@@ -1,13 +1,13 @@
 import uuid
 import streamlit as st
 from dotenv import load_dotenv
+from typing import Any, Iterable
 
 from core.config import load_config
 from core.logging_setup import setup_logger
 from core.llm_factory import create_llm
-from core.orchestrator import generate_only, generate_and_improve, improve_again
-from agent.schemas import PoemRequest
 from core.storage import get_storage
+from core.orchestrator import agent  # adjust if named differently
 
 # -------------------------------------------------------------------
 # Setup
@@ -18,15 +18,33 @@ logger = setup_logger()
 
 st.set_page_config(
     page_title="The Weight of Words",
+    page_icon="📜",
     layout="wide",
 )
+
+# -------------------------------------------------------------------
+# Styling (background + cursive title)
+# -------------------------------------------------------------------
 
 st.markdown(
     """
     <style>
+    [data-testid="stAppViewContainer"] > .main {
+        background-image: url("https://images.freepik.com/free-ai-image/mesmerizing-colorful-skies-illustration_381016425.jpg");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }
+
     h1 {
-        font-family: "Brush Script MT", cursive;
-        font-size: 3rem;
+        font-family: "Brush Script MT", "Apple Chancery", cursive !important;
+        letter-spacing: 0.5px;
+    }
+
+    [data-testid="stMainBlockContainer"] {
+        background: rgba(255,255,255,0.82);
+        border-radius: 18px;
+        padding: 1.5rem;
     }
     </style>
     """,
@@ -34,10 +52,82 @@ st.markdown(
 )
 
 st.title("The Weight of Words")
-st.caption("A personalized poem generator")
+st.caption("A thoughtful poetry agent")
 
 # -------------------------------------------------------------------
-# Config + storage
+# Helpers
+# -------------------------------------------------------------------
+
+
+def build_user_memory(
+    storage: Any,
+    user_id: str,
+    *,
+    include_prefs: bool = True,
+    include_people: bool = True,
+) -> str:
+    parts: list[str] = []
+
+    # Preferences (safe, optional)
+    if include_prefs:
+        prefs = {}
+        for fn_name in ("get_user_preferences", "get_prefs"):
+            fn = getattr(storage, fn_name, None)
+            if callable(fn):
+                try:
+                    prefs = fn(user_id)
+                except Exception:
+                    prefs = {}
+                break
+
+        if isinstance(prefs, dict) and prefs:
+            lines = [f"- {k}: {v}" for k, v in prefs.items() if v]
+            if lines:
+                parts.append("USER PREFERENCES:\n" + "\n".join(lines))
+
+    # People memory
+    if include_people:
+        people = []
+        if hasattr(storage, "list_people"):
+            try:
+                people = storage.list_people(user_id)
+            except Exception:
+                people = []
+
+        names = []
+        for p in people:
+            if isinstance(p, dict) and p.get("name"):
+                names.append(p["name"])
+
+        if names:
+            parts.append("PEOPLE TO REMEMBER:\n- " + "\n- ".join(names))
+
+    return "\n\n".join(parts).strip()
+
+
+def extract_text(result: Any) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for k in ("text", "content", "output", "final"):
+            if k in result and isinstance(result[k], str):
+                return result[k]
+        msgs = result.get("messages")
+        if isinstance(msgs, list) and msgs:
+            last = msgs[-1]
+            if isinstance(last, dict) and isinstance(last.get("content"), str):
+                return last["content"]
+            if hasattr(last, "content"):
+                return str(last.content)
+    if hasattr(result, "content"):
+        return str(result.content)
+    return str(result)
+
+
+# -------------------------------------------------------------------
+# Config + Storage
 # -------------------------------------------------------------------
 
 try:
@@ -53,7 +143,6 @@ except Exception as e:
     st.error(f"Storage init failed: {e}")
     st.stop()
 
-# Stable session user
 if "user_id" not in st.session_state:
     st.session_state["user_id"] = "user_" + str(uuid.uuid4())[:8]
 USER_ID = st.session_state["user_id"]
@@ -62,96 +151,75 @@ USER_ID = st.session_state["user_id"]
 # Session defaults
 # -------------------------------------------------------------------
 
-defaults = {
-    "poem_name": "Untitled",
-    "versions": [],
-    "rated_versions": set(),
-    "adv_model": "gpt-4o-mini",
-    "adv_temperature": 0.9,
-    "adv_top_p": 0.95,
-    "adv_apply_prefs": True,
-    "adv_use_people": True,
-    "adv_show_injected_memory": False,
-    "adv_show_debug": False,
-    "adv_show_cost": False,
-}
+st.session_state.setdefault("versions", [])
+st.session_state.setdefault("poem_text", "")
+st.session_state.setdefault("poem_name", "Untitled")
 
-for k, v in defaults.items():
-    st.session_state.setdefault(k, v)
-
-# -------------------------------------------------------------------
-# Memory builder (FIX)
-# -------------------------------------------------------------------
-
-
-def build_user_memory(storage_obj, user_id, include_prefs=True, include_people=True):
-    parts = []
-
-    if include_prefs:
-        taste = storage_obj.get_taste_profile(user_id) or {}
-        total = int(taste.get("total_ratings", 0) or 0)
-
-        if total <= 0:
-            parts.append("Preferences learned from ratings: none yet.")
-        else:
-            rhyme_score = float(taste.get("prefer_rhyme_score", 0.0) or 0.0)
-            rhyme_hint = (
-                "prefers rhyme"
-                if rhyme_score > 1
-                else (
-                    "prefers no rhyme"
-                    if rhyme_score < -1
-                    else "no strong rhyme preference"
-                )
-            )
-
-            avg_lines = taste.get("avg_line_count")
-            avg_lines = str(int(avg_lines)) if avg_lines else "unknown"
-
-            parts.append(
-                "Preferences learned from ratings:\n"
-                f"- {rhyme_hint}\n"
-                f"- typical length: ~{avg_lines} lines"
-            )
-
-    if include_people:
-        people = storage_obj.list_people(user_id) or []
-        if not people:
-            parts.append("People memory: none yet.")
-        else:
-            lines = [
-                f"- {p['name']} ({p['relationship']})"
-                + (f" — {p['note']}" if p.get("note") else "")
-                for p in people[:10]
-            ]
-            parts.append("People memory:\n" + "\n".join(lines))
-
-    return "\n\n".join(parts).strip()
-
+# Advanced
+st.session_state.setdefault("adv_model", "gpt-4o-mini")
+st.session_state.setdefault("adv_temperature", 0.9)
+st.session_state.setdefault("adv_top_p", 0.95)
+st.session_state.setdefault("adv_apply_prefs", True)
+st.session_state.setdefault("adv_use_people", True)
+st.session_state.setdefault("adv_show_memory", False)
 
 # -------------------------------------------------------------------
 # Tabs
 # -------------------------------------------------------------------
 
-tab_write, tab_people, tab_adv = st.tabs(["Write", "People", "Advanced"])
+tab_write, tab_people, tab_advanced = st.tabs(["Write", "People", "Advanced"])
 
-# -------------------------------------------------------------------
-# WRITE TAB
-# -------------------------------------------------------------------
+# ===========================
+# ADVANCED
+# ===========================
+
+with tab_advanced:
+    st.subheader("Advanced settings")
+
+    st.session_state["adv_model"] = st.selectbox(
+        "Model", ["gpt-4o-mini", "gpt-4o"], index=0
+    )
+    st.session_state["adv_temperature"] = st.slider(
+        "Temperature", 0.0, 1.5, st.session_state["adv_temperature"], 0.1
+    )
+    st.session_state["adv_top_p"] = st.slider(
+        "Top-p", 0.1, 1.0, st.session_state["adv_top_p"], 0.05
+    )
+
+    st.divider()
+
+    st.session_state["adv_apply_prefs"] = st.checkbox(
+        "Apply my preferences", value=st.session_state["adv_apply_prefs"]
+    )
+    st.session_state["adv_use_people"] = st.checkbox(
+        "Use people memory", value=st.session_state["adv_use_people"]
+    )
+    st.session_state["adv_show_memory"] = st.checkbox(
+        "Show injected memory", value=st.session_state["adv_show_memory"]
+    )
+
+# Create LLM once
+llm = create_llm(
+    cfg,
+    model=st.session_state["adv_model"],
+    temperature=st.session_state["adv_temperature"],
+    top_p=st.session_state["adv_top_p"],
+)
+
+# ===========================
+# WRITE
+# ===========================
 
 with tab_write:
     st.subheader("Write")
 
-    poem_name = st.text_input("Poem name", value=st.session_state["poem_name"])
+    poem_name = st.text_input("Poem name", st.session_state["poem_name"])
     st.session_state["poem_name"] = poem_name
 
     theme = st.text_area("Theme / background", height=120)
-
     style = st.selectbox(
-        "Format",
-        ["free_verse", "haiku", "sonnet_like", "spoken_word"],
+        "Format", ["free_verse", "haiku", "sonnet_like", "spoken_word"]
     )
-
     line_count = st.slider("Length (lines)", 4, 60, 12)
 
     user_memory = ""
@@ -163,112 +231,90 @@ with tab_write:
             include_people=st.session_state["adv_use_people"],
         )
 
-    if st.session_state["adv_show_injected_memory"]:
+    if st.session_state["adv_show_memory"] and user_memory:
         st.code(user_memory)
 
-    if st.button("Generate poem"):
-        req = PoemRequest(
-            poem_name=poem_name,
-            theme=theme,
-            style=style,
-            line_count=line_count,
-            user_memory=user_memory,
-        )
+    st.divider()
 
-        llm = create_llm(
-            cfg,
-            model=st.session_state["adv_model"],
-            temperature=st.session_state["adv_temperature"],
-            top_p=st.session_state["adv_top_p"],
-        )
+    col1, col2, col3, col4 = st.columns(4)
 
-        poem, meta = generate_only(llm, req)
+    with col1:
+        gen_fast = st.button("⚡ Generate (fast)", use_container_width=True)
+    with col2:
+        gen = st.button("✨ Generate", use_container_width=True)
+    with col3:
+        improve = st.button("🛠 Improve", use_container_width=True)
+    with col4:
+        clear = st.button("🧹 Clear versions", use_container_width=True)
 
-        st.session_state["versions"].append({"text": poem, "meta": meta})
+    if clear:
+        st.session_state["versions"] = []
+        st.session_state["poem_text"] = ""
+        st.rerun()
 
-    # ---- Show versions + rating ----
-    for i, v in enumerate(st.session_state["versions"]):
-        st.markdown(f"### Version {i + 1}")
-        st.text(v["text"])
+    if gen_fast or gen:
+        payload = {
+            "theme": theme,
+            "style": style,
+            "line_count": line_count,
+            "memory": user_memory,
+            "mode": "fast" if gen_fast else "best",
+        }
+        result = agent.invoke(payload)
+        text = extract_text(result).strip()
+        if text:
+            st.session_state["versions"].append(text)
+            st.session_state["poem_text"] = text
+            st.rerun()
 
-        if i not in st.session_state["rated_versions"]:
-            rating = st.radio(
-                "Rate this version",
-                [1, 2, 3, 4, 5],
-                horizontal=True,
-                key=f"rate_{i}",
-            )
-            if st.button("Submit rating", key=f"submit_{i}"):
-                storage.add_rating(
-                    USER_ID,
-                    poem_name,
-                    v["text"],
-                    rating,
-                )
-                st.session_state["rated_versions"].add(i)
-                st.success("Thanks for the feedback!")
+    if improve and st.session_state["poem_text"]:
+        payload = {
+            "draft": st.session_state["poem_text"],
+            "theme": theme,
+            "style": style,
+            "line_count": line_count,
+            "memory": user_memory,
+            "mode": "improve",
+        }
+        result = agent.invoke(payload)
+        text = extract_text(result).strip()
+        if text:
+            st.session_state["versions"].append(text)
+            st.session_state["poem_text"] = text
+            st.rerun()
 
-# -------------------------------------------------------------------
-# PEOPLE TAB
-# -------------------------------------------------------------------
+    st.text_area("Poem", st.session_state["poem_text"], height=360)
+
+    if st.session_state["versions"]:
+        st.markdown("### Versions")
+        for i, v in enumerate(reversed(st.session_state["versions"]), 1):
+            with st.expander(f"Version {len(st.session_state['versions']) - i + 1}"):
+                st.code(v)
+
+# ===========================
+# PEOPLE
+# ===========================
 
 with tab_people:
-    st.subheader("People memory")
+    st.subheader("People")
 
-    with st.form("add_person", clear_on_submit=True):
+    with st.form("add_person"):
         name = st.text_input("Name")
         relationship = st.text_input("Relationship")
-        note = st.text_area("Note", height=80)
+        note = st.text_area("Note")
         submitted = st.form_submit_button("Save")
 
-    if submitted:
-        storage.add_person(USER_ID, name, relationship, note)
-        st.success("Saved.")
+    if submitted and name:
+        storage.add_person(USER_ID, name=name, relationship=relationship, note=note)
+        st.success("Saved")
 
     st.divider()
+
     people = storage.list_people(USER_ID)
     if not people:
         st.info("No people saved yet.")
     else:
         for p in people:
-            st.markdown(f"**{p['name']}** — {p['relationship']}")
+            st.markdown(f"**{p['name']}** — {p.get('relationship','')}")
             if p.get("note"):
                 st.caption(p["note"])
-
-# -------------------------------------------------------------------
-# ADVANCED TAB
-# -------------------------------------------------------------------
-
-with tab_adv:
-    st.subheader("Advanced settings")
-
-    st.markdown("### Personalization")
-    st.session_state["adv_apply_prefs"] = st.toggle(
-        "Apply my preferences", st.session_state["adv_apply_prefs"]
-    )
-    st.session_state["adv_use_people"] = st.toggle(
-        "Use people memory", st.session_state["adv_use_people"]
-    )
-    st.session_state["adv_show_injected_memory"] = st.toggle(
-        "Show injected memory", st.session_state["adv_show_injected_memory"]
-    )
-
-    st.divider()
-    st.markdown("### Model")
-    st.session_state["adv_model"] = st.selectbox(
-        "Model",
-        ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
-    )
-    st.session_state["adv_temperature"] = st.slider(
-        "Temperature", 0.0, 1.5, st.session_state["adv_temperature"], 0.1
-    )
-    st.session_state["adv_top_p"] = st.slider(
-        "Top-p", 0.1, 1.0, st.session_state["adv_top_p"], 0.05
-    )
-
-    st.divider()
-    st.markdown("### Debug / cost")
-    st.session_state["adv_show_cost"] = st.toggle(
-        "Show token cost (experimental)",
-        st.session_state["adv_show_cost"],
-    )
